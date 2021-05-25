@@ -1,5 +1,24 @@
-import os
+"""
+PyPhaseChip is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+PyPhaseChip is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+You should have received a copy of the GNU General Public License
+along with PyPhaseChip. If not, see <http://www.gnu.org/licenses/>.
+Copyright (c) the PyPhaseChip Developers. See the COPYRIGHT.txt file at the
+top-level directory of this distribution and at <https://github.com/cfsb618/PyPhaseChip>
 
+ACKNOWLEDGMENT:
+This code wouldn't be possible without the exhaustive help of my friend Dinesh Pinto.
+He is not only a great physicist but also a very good coder. Check out his Github:
+https://github.com/dineshpinto
+"""
+
+import os
 import cv2
 import numpy as np
 from tqdm import tqdm
@@ -57,7 +76,7 @@ def images_to_dict(h, iph, n_concentrations, image_list, image_names, bigdict, l
 # Detect the reaction chamber and create a specific mask
 def chamber_detection_and_mask_creation(n_concentrations, bigdict, min_r_chamber, max_r_chamber):
     well_nr = 0
-    for number_of_columns_per_lane in range(1):  # usually 10 on full chip
+    for number_of_columns_per_lane in tqdm(range(1)):  # usually 10 on full chip
         for lane_nr in (range(n_concentrations)):
             for number_of_rows_per_lane in range(2):
 
