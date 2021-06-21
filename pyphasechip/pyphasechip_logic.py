@@ -21,7 +21,9 @@ https://github.com/dineshpinto
 import os
 import cv2
 import numpy as np
+import csv
 from tqdm import tqdm
+import matplotlib.pyplot as plt
 
 from pyphasechip import pyphasechip_fun
 
@@ -152,6 +154,7 @@ def detect_LLPS(h, iph, n_concentrations, bigdict, percental_threshold):
                         # select droplet, and get all necessary information from it
                         area_droplet, cX_droplet, cY_droplet, contour_droplet = pyphasechip_fun.select_droplet(
                             bigdict[0][lane_nr][well_nr]['contours'])
+                        bigdict[0][lane_nr][well_nr]['contours droplet'] = contour_droplet
 
                         # calculate minimal distance from droplet center to edge
                         bigdict[time_idx][lane_nr][well_nr]['minimal distance'] = pyphasechip_fun.minDistance(
@@ -196,7 +199,7 @@ def ccrit_calculation(initc_sol1, initc_sol2, init_ratio, h, iph, n_concentratio
     for time_idx in range(int((h * iph) + 1)):
         for number_of_columns_per_time in range(1):  # usually 10 on full chip
             for lane_nr in (range(n_concentrations)):
-                for number_of_rows_per_time in range(2):
+                for number_of_rows_per_lane in range(2):
                     if bigdict[0][lane_nr][well_nr]['well found'] is True and \
                             bigdict[0][lane_nr][well_nr]['LLPS status'] is True:
                         bigdict[0][lane_nr][well_nr]['LLPS conc'] = np.zeros(shape=(1, 2))
@@ -216,3 +219,77 @@ def ccrit_calculation(initc_sol1, initc_sol2, init_ratio, h, iph, n_concentratio
         well_nr = 0
 
     return starting_concentrations
+
+
+def quality_control(bigdict, lane_nr, well_nr, name_sol1, name_sol2, unit_sol1, unit_sol2, starting_concentrations):
+    print('initial concentrations:')
+    print(name_sol1, '', name_sol2)
+    print(starting_concentrations)
+
+    print(' ')
+    print('LLPS concentrations:')
+    print(f"{name_sol1}", f"- conc. {lane_nr}: {round((bigdict[0][lane_nr][well_nr]['LLPS conc'][0, 0]), 3)} {unit_sol1}")
+    print(f"{name_sol2}", f"- conc. {lane_nr}: {round((bigdict[0][lane_nr][well_nr]['LLPS conc'][0, 1]), 3)} {unit_sol2}")
+
+    gray_img = bigdict[0][lane_nr][well_nr]['raw'].copy()
+    musk_img = gray_image = bigdict[0][lane_nr][well_nr]['elon'].copy()
+    musked_img = bigdict[0][lane_nr][well_nr]['masked image'].copy()
+
+    # draw elon masked image with contour tattoos
+    A_12 = bigdict[((bigdict[0][lane_nr][well_nr]['ID']) - 1)][lane_nr][well_nr]['masked image'].copy()
+    contour_img = cv2.drawContours(A_12, bigdict[0][lane_nr][well_nr]['contours droplet'], -1, (255, 165, 0), 3)
+
+    # draw elon masked LLPS image with contour tattoos
+    grimes = bigdict[(bigdict[0][lane_nr][well_nr]['ID'])][lane_nr][well_nr]['masked image'].copy()
+    contour_img_LLPS = cv2.drawContours(grimes, bigdict[0][lane_nr][well_nr]['contours droplet'], -1, (255, 165, 0), 3)
+
+    plt.subplots(figsize=(18, 18))
+    plt.subplot(141)
+    plt.imshow(gray_img, cmap='gray')
+    plt.title('raw image')
+    plt.subplot(142)
+    plt.imshow(musked_img, cmap='gray')
+    plt.title('masked image')
+    plt.subplot(143)
+    plt.imshow(contour_img, cmap='gray')
+    plt.title('detected droplet before LLPS occures')
+    plt.subplot(144)
+    plt.imshow(contour_img_LLPS, cmap='gray')
+    plt.title('detected droplet when LLPS occures')
+
+
+def save_results_to_csv(bigdict, image_folder, n_concentrations, h, iph, name_sol1, name_sol2, unit_sol1, unit_sol2):
+    well_nr = 0
+    pathtocsv = os.path.join(image_folder, "csv")
+
+    try:
+        os.mkdir(pathtocsv)
+    except OSError as e:
+        print("Attention: Directory where .csv gets saved already exists")
+
+    csvname = f"results_{name_sol1}_{name_sol2}.csv"
+
+    with open(os.path.join(pathtocsv, csvname), 'w', newline='') as csvFile:
+        writer = csv.writer(csvFile, delimiter=';', dialect='excel', quotechar='"', quoting=csv.QUOTE_ALL)
+        writer.writerow(["Image names", f"LLPS conc. {name_sol1} [{unit_sol1}]",
+                         f"LLPS conc. {name_sol2} [{unit_sol2}]"])
+        writer.writerow(" ")
+
+        for number_of_columns_per_time in range(1):  # usually 10 on full chip
+            for lane_nr in (range(n_concentrations)):
+                for number_of_rows_per_lane in range(2):
+                    if bigdict[0][lane_nr][well_nr]['well found'] is True and \
+                            bigdict[0][lane_nr][well_nr]['LLPS status'] is True:
+                        writer.writerow(
+                            [bigdict[0][lane_nr][well_nr]['LLPS name'], bigdict[0][lane_nr][well_nr]['LLPS conc'][0, 0],
+                             bigdict[0][lane_nr][well_nr]['LLPS conc'][0, 1]])
+
+                    well_nr += 1
+                well_nr -= 2
+            well_nr += 2
+
+        writer.writerow(" ")
+        writer.writerow(" ")
+        writer.writerow(["If you use natively a ',' as a decimal separator, you propably need/"
+                         "to change it for correct display of numbers"])
+        writer.writerow(["In excel you can do this via File -> Options -> Advanced, here you can change separators"])
