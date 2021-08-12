@@ -11,14 +11,11 @@ You should have received a copy of the GNU General Public License
 along with PyPhaseChip. If not, see <http://www.gnu.org/licenses/>.
 Copyright (c) the PyPhaseChip Developers. See the COPYRIGHT.txt file at the
 top-level directory of this distribution and at <https://github.com/cfsb618/PyPhaseChip>
-
 ACKNOWLEDGMENT:
 This code wouldn't be possible without the exhaustive help of my friend Dinesh Pinto.
 He is not only a great physicist but also a very good coder. Check out his Github:
 https://github.com/dineshpinto
 """
-
-
 
 import cv2
 import numpy as np
@@ -53,7 +50,7 @@ def create_mask(img, circles_from_hc_detection):
     # read information from circle detection
     x0 = circles_from_hc_detection[0, 0, 0]
     y0 = circles_from_hc_detection[0, 0, 1]
-    radius = circles_from_hc_detection[0, 0, 2]
+    radius = circles_from_hc_detection[0, 0, 2]*1.1
 
     # create 1 elon mask
     elon_mask = np.zeros(shape=img.shape, dtype="uint8")
@@ -76,9 +73,22 @@ def mask_image(img, elon_mask):
 
 
 # Contour detection
-def detect_contours(elon_mask):
-    _, image = cv2.threshold(elon_mask, 150, 255, cv2.THRESH_BINARY_INV)
+def detect_contours(elon_mask, thresh_value):
+    thresh_value = thresh_value*0.90
+    _, image = cv2.threshold(elon_mask, thresh_value, 255, cv2.THRESH_BINARY_INV)
+    #image = cv2.adaptiveThreshold(elon_mask,255,cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY,25,2) #test
 
+    def canny_threshold(img, val, ratio, kernel_size):
+        low_threshold = val
+        img_blur = cv2.blur(img, (10, 10))
+        detected_edges = cv2.Canny(img_blur, low_threshold, low_threshold * ratio, kernel_size)
+        mask = detected_edges != 0
+        dst = img * (mask[:, :, ].astype(img.dtype))
+        return dst
+
+    #image = canny_threshold(image, val=0, ratio=3, kernel_size=10) # kernel 3 to low
+
+    safespot1 = image.copy()
     # Solidify faint droplet edges
     kernel = np.ones((8, 8), np.uint8)
     image = cv2.dilate(image, kernel, iterations=3)
@@ -87,12 +97,13 @@ def detect_contours(elon_mask):
     # and make them rly nice & thick
     kernel_nu = np.ones((7, 7), np.uint8)
     image = cv2.dilate(image, kernel_nu, iterations=1)
+    safespot2 = image.copy()
 
     # this is the core: contour detection
     contours_within_elon, hierarchy = cv2.findContours(image, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
     # if somehow the image is not recognised as a contour, use cv2.RETR_EXTERNAL
 
-    return contours_within_elon
+    return contours_within_elon, safespot1, safespot2
 
 
 # Select second biggest contour in the image, hence, the biggest droplet since image is
@@ -173,6 +184,7 @@ def __squircle_iterator(cX_droplet, cY_droplet):
 
 # store selected pixels (more importantly their values) in new array
 def squircle_iteration(img, x0, y0, radius):
+    radius = radius*0.5
     z = np.zeros(shape=(len(img[:, 0]), len(img[0, :])))
     for (idx1, idx2) in __squircle_iterator(x0, y0):
         if (idx1 - x0) ** 2 + (idx2 - y0) ** 2 < radius ** 2:
@@ -195,9 +207,11 @@ def LLPS_detection(mean_of_current_image, percental_threshold, area_droplet, dic
     if percental_difference > percental_threshold:
         dict[0][lane_nr][well_nr]['LLPS status'] = True
         # save name of image where LLPS was detected
-        dict[0][lane_nr][well_nr]['LLPSname'] = dict[time_idx][lane_nr][well_nr]['name']
+        dict[0][lane_nr][well_nr]['LLPS name'] = dict[time_idx][lane_nr][well_nr]['name']
         # save area to array
         dict[0][lane_nr][well_nr]['areas'][0, 1] = area_droplet
+        # save img ID
+        dict[0][lane_nr][well_nr]['ID'] = time_idx
 
     else:
         dict[0][lane_nr][well_nr]['LLPS status'] = False
