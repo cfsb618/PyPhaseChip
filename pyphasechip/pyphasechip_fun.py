@@ -45,12 +45,60 @@ def starting_concentration(initial_conc_solution1, initial_conc_solution2, initi
     return starting_conc
 
 
+# TEST
+# adjust brightness & contrast
+def controller(img, brightness=255, contrast=127):
+
+    brightness = int((brightness - 0) * (255 - (-255)) / (510 - 0) + (-255))
+
+    contrast = int((contrast - 0) * (127 - (-127)) / (254 - 0) + (-127))
+
+    if brightness != 0:
+
+        if brightness > 0:
+
+            shadow = brightness
+
+            max = 255
+
+        else:
+
+            shadow = 0
+            max = 255 + brightness
+
+        al_pha = (max - shadow) / 255
+        ga_mma = shadow
+
+        # The function addWeighted calculates
+        # the weighted sum of two arrays
+        cal = cv2.addWeighted(img, al_pha,
+                              img, 0, ga_mma)
+
+    else:
+        cal = img
+
+    if contrast != 0:
+        Alpha = float(131 * (contrast + 127)) / (127 * (131 - contrast))
+        Gamma = 127 * (1 - Alpha)
+
+        # The function addWeighted calculates
+        # the weighted sum of two arrays
+        cal = cv2.addWeighted(cal, Alpha,
+                              cal, 0, Gamma)
+
+    # putText renders the specified text string in the image.
+    #cv2.putText(cal, 'B:{},_____C:{}'.format(brightness,
+    #                                         contrast), (10, 30),
+    #            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+
+    return cal
+
 # create mask
 def create_mask(img, circles_from_hc_detection):
     # read information from circle detection
     x0 = circles_from_hc_detection[0, 0, 0]
     y0 = circles_from_hc_detection[0, 0, 1]
-    radius = circles_from_hc_detection[0, 0, 2]*1.1
+    radius = circles_from_hc_detection[0, 0, 2]*1.2
 
     # create 1 elon mask
     elon_mask = np.zeros(shape=img.shape, dtype="uint8")
@@ -66,7 +114,7 @@ def create_mask(img, circles_from_hc_detection):
 
 # masking image
 def mask_image(img, elon_mask):
-    img[elon_mask == 0] = 0
+    img[elon_mask == 0] = 209
     img[elon_mask != 0] = img[elon_mask != 0]
 
     return img
@@ -74,9 +122,11 @@ def mask_image(img, elon_mask):
 
 # Contour detection
 def detect_contours(elon_mask, thresh_value):
-    thresh_value = thresh_value*0.90
+    thresh_value = thresh_value*1.0
+    thresh_value = 200
+    #print("thresh:", thresh_value)
     _, image = cv2.threshold(elon_mask, thresh_value, 255, cv2.THRESH_BINARY_INV)
-    #image = cv2.adaptiveThreshold(elon_mask,255,cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY,25,2) #test
+    #image = cv2.adaptiveThreshold(elon_mask, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 25, 2)
 
     def canny_threshold(img, val, ratio, kernel_size):
         low_threshold = val
@@ -87,23 +137,71 @@ def detect_contours(elon_mask, thresh_value):
         return dst
 
     #image = canny_threshold(image, val=0, ratio=3, kernel_size=10) # kernel 3 to low
+    # TODO: remove canny if not needed
 
-    safespot1 = image.copy()
-    # Solidify faint droplet edges
-    kernel = np.ones((8, 8), np.uint8)
-    image = cv2.dilate(image, kernel, iterations=3)
-    image = cv2.erode(image, kernel, iterations=3)
+    threshed_img = image.copy()
+
+    # Kernelsize for last dilate operation is very important for findContours
+    # needs to be bigger than 1, reason currently unknown
+
+    # Solidify faint droplet edges, mop up dirt
+    kernel = np.ones((2, 2), np.uint8)
+    #for i in range(2):
+    #    image = cv2.erode(image, kernel, iterations=1)
+    #    image = cv2.dilate(image, kernel, iterations=1)
+    mopped_up_img = image.copy()
 
     # and make them rly nice & thick
-    kernel_nu = np.ones((7, 7), np.uint8)
+    kernel_nu = np.ones((3, 3), np.uint8)
     image = cv2.dilate(image, kernel_nu, iterations=1)
-    safespot2 = image.copy()
+    dilated_img = image.copy()
 
     # this is the core: contour detection
     contours_within_elon, hierarchy = cv2.findContours(image, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-    # if somehow the image is not recognised as a contour, use cv2.RETR_EXTERNAL
 
-    return contours_within_elon, safespot1, safespot2
+    return contours_within_elon, threshed_img, mopped_up_img, dilated_img
+
+def detect_contours_cannytest(elon_mask, thresh_value):
+    thresh_value = thresh_value*1.0
+    thresh_value = 200
+    #print("thresh:", thresh_value)
+    #_, image = cv2.threshold(elon_mask, thresh_value, 255, cv2.THRESH_BINARY_INV)
+    #image = cv2.adaptiveThreshold(elon_mask, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 25, 2)
+
+    def canny_threshold(img, minval, maxval, kernel_size):
+        low_threshold = minval
+        max_threshold = maxval
+        img_blur = cv2.blur(img, (10, 10))
+        img_dil = cv2.dilate(img_blur, (4, 4), iterations=1)
+        detected_edges = cv2.Canny(img_dil, low_threshold, max_threshold, kernel_size)
+        mask = detected_edges != 0
+        dst = img * (mask[:, :, ].astype(img.dtype))
+        return dst
+
+    image = canny_threshold(elon_mask, minval=3, maxval=8, kernel_size=10) # kernel 3 to low
+    # TODO: remove canny if not needed
+
+    threshed_img = image.copy()
+
+    # Kernelsize for last dilate operation is very important for findContours
+    # needs to be bigger than 1, reason currently unknown
+
+    # Solidify faint droplet edges, mop up dirt
+    kernel = np.ones((2, 2), np.uint8)
+    #for i in range(2):
+    #    image = cv2.erode(image, kernel, iterations=1)
+    #    image = cv2.dilate(image, kernel, iterations=1)
+    mopped_up_img = image.copy()
+
+    # and make them rly nice & thick
+    kernel_nu = np.ones((4, 4), np.uint8)
+    image = cv2.dilate(image, kernel_nu, iterations=1)
+    dilated_img = image.copy()
+
+    # this is the core: contour detection
+    contours_within_elon, hierarchy = cv2.findContours(image, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+
+    return contours_within_elon, threshed_img, mopped_up_img, dilated_img
 
 
 # Select second biggest contour in the image, hence, the biggest droplet since image is
@@ -137,6 +235,67 @@ def select_droplet(contours):
     contour_droplet = np.asarray(contours[index_2nd_maxvalue])
 
     return area_droplet, cX_droplet, cY_droplet, contour_droplet
+
+
+def select_droplet_test(contours, diameter_well):
+    # create storage
+    area = []
+    idx_list = []
+    length = len(contours)
+    contour_center_points = np.zeros(shape=(length, 2))
+
+    area_well = 3.141*(diameter_well/2)**2
+    area_well_min = 3.141*((diameter_well/2)*0.2)**2  # TODO: can be determined in the jupyter script
+
+    # Normalise droplet area to well area & write areas into list
+    # calculate & write droplet center coordinates into array
+    for idx, contour in enumerate(contours):
+        area.append(cv2.contourArea(contour))
+
+        M = cv2.moments(contour)
+        cX = int(M["m10"] / M["m00"])
+        cY = int(M["m01"] / M["m00"])
+        contour_center_points[idx, 0] = cX
+        contour_center_points[idx, 1] = cY
+
+    # get idx of too small or too big areas
+    for idx in range(len(area)):
+        if area[idx] < area_well_min:
+            idx_list.append(idx)
+        elif area[idx] > area_well:
+            idx_list.append(idx)
+
+    # delete them
+    for i in reversed(idx_list):
+        del area[i]
+        contour_center_points = np.delete(contour_center_points, i, 0)
+        contours = np.delete(contours, i, 0)
+    print("area after del", area)
+
+    # get index of biggest area
+    if len(area) > 0:
+        index_maxvalue = area.index(max(area))
+
+        # get droplet area
+        area_droplet = int(area[index_maxvalue])
+
+        # get droplet center coordinates
+        cX_droplet = int(contour_center_points[index_maxvalue, 0])
+        cY_droplet = int(contour_center_points[index_maxvalue, 1])
+
+        # get contour of droplet edge
+        contour_droplet = np.asarray(contours[index_maxvalue])
+
+        droplet_status = True
+
+    else:
+        area_droplet = 0
+        cX_droplet = 0
+        cY_droplet = 0
+        contour_droplet = 0
+        droplet_status = False
+
+    return area_droplet, cX_droplet, cY_droplet, contour_droplet, droplet_status
 
 
 # calculate minimal distance between droplet center and droplet contour
@@ -184,7 +343,7 @@ def __squircle_iterator(cX_droplet, cY_droplet):
 
 # store selected pixels (more importantly their values) in new array
 def squircle_iteration(img, x0, y0, radius):
-    radius = radius*0.5
+    radius = radius*0.9
     z = np.zeros(shape=(len(img[:, 0]), len(img[0, :])))
     for (idx1, idx2) in __squircle_iterator(x0, y0):
         if (idx1 - x0) ** 2 + (idx2 - y0) ** 2 < radius ** 2:
@@ -196,7 +355,7 @@ def squircle_iteration(img, x0, y0, radius):
 
 # LLPS detector
 def LLPS_detection(mean_of_current_image, percental_threshold, area_droplet, dict, time_idx, lane_nr, well_nr):
-    if len(dict[0][lane_nr][well_nr]['mean list']) > 1:
+    if len(dict[0][lane_nr][well_nr]['mean list']) >= 1:
         avg_mean_all_previous_images = np.mean(dict[0][lane_nr][well_nr]['mean list'])
     else:
         avg_mean_all_previous_images = mean_of_current_image
@@ -217,3 +376,30 @@ def LLPS_detection(mean_of_current_image, percental_threshold, area_droplet, dic
         dict[0][lane_nr][well_nr]['LLPS status'] = False
         # save mean to mean list
         dict[0][lane_nr][well_nr]['mean list'].append(mean_of_current_image)
+
+
+def hough_test(dropletcontours, grayimg):
+    min_r_chamber = int((238/2)*0.2)
+    max_r_chamber = int((238/2)*0.9)
+
+    img = np.zeros(shape=grayimg.shape)
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    drawncontours_img = cv2.drawContours(img.copy(), dropletcontours, -1,
+                                         (255, 165, 0), 2)
+
+    kernel_nu = np.ones((3, 3), np.uint8)
+    image = cv2.dilate(drawncontours_img, kernel_nu, iterations=1)
+
+    circles = cv2.HoughCircles(image, cv2.HOUGH_GRADIENT, dp=1,
+                               minDist=50, param1=10,
+                               minRadius=min_r_chamber, maxRadius=max_r_chamber)
+
+    for i in circles[0, :]:
+        center = (i[0], i[1])
+        # circle outline
+        radius = (i[2])
+        circles_img = cv2.circle(grayimg.copy(), center, radius, (0, 0, 0), 1)
+
+    return circles_img
+
