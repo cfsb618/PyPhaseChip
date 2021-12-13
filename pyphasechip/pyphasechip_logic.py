@@ -130,7 +130,6 @@ def chamber_detection_and_mask_creation(n_concentrations, n_wells, bigdict, min_
                     bigdict[0][conc_nr][well_nr]['init_mean'] = np.mean(bigdict[0][conc_nr][well_nr]['gray'])
 
                     # create mask
-                    # TODO: test if we can work without mask
                     bigdict[0][conc_nr][well_nr]['elon'] = \
                         pyphasechip_fun.create_mask(bigdict[0][conc_nr][well_nr]['gray'].copy(), circles)
 
@@ -138,8 +137,6 @@ def chamber_detection_and_mask_creation(n_concentrations, n_wells, bigdict, min_
                     bigdict[0][conc_nr][well_nr]['masked image'] = pyphasechip_fun.mask_image(
                         bigdict[0][conc_nr][well_nr]['gray'].copy(),
                         bigdict[0][conc_nr][well_nr]['elon'])
-                    #bigdict[0][conc_nr][well_nr]['masked image'] = bigdict[0][conc_nr][well_nr]['gray'].copy()
-
 
                     # blur before Mr. Hough is always a good idea
                     temp = cv2.blur(bigdict[0][conc_nr][well_nr]['masked image'].copy(), (2, 2))
@@ -224,11 +221,9 @@ def detect_LLPS(h, iph, n_concentrations, n_wells, bigdict, percental_threshold)
                             and bigdict[0][conc_nr][well_nr]['LLPS status'] is False:
 
                         # mask image
-                        # TODO: test if we can work without mask
                         bigdict[time_idx][conc_nr][well_nr]['masked image'] = pyphasechip_fun.mask_image(
                             bigdict[time_idx][conc_nr][well_nr]['gray'].copy(),
                             bigdict[0][conc_nr][well_nr]['elon'])
-                        # bigdict[time_idx][conc_nr][well_nr]['masked image'] = bigdict[time_idx][conc_nr][well_nr]['gray'].copy()
 
                         # hough circle for droplet detection
                         if bigdict[0][conc_nr][well_nr]['droplet status'] is False:
