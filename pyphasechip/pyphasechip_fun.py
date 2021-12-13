@@ -359,7 +359,9 @@ def LLPS_detection(mean_of_current_image, percental_threshold, area_droplet, dic
         avg_mean_all_previous_images = np.mean(dict[0][lane_nr][well_nr]['mean list'])
     else:
         avg_mean_all_previous_images = mean_of_current_image
-
+    # print(time_idx, lane_nr, well_nr)
+    # print("current",mean_of_current_image)
+    # print("avg",avg_mean_all_previous_images)
     # Calculate percental difference between current mean value and average mean of all previous images
     percental_difference = (mean_of_current_image / avg_mean_all_previous_images) * 100 - 100
 
@@ -371,6 +373,10 @@ def LLPS_detection(mean_of_current_image, percental_threshold, area_droplet, dic
         dict[0][lane_nr][well_nr]['areas'][0, 1] = area_droplet
         # save img ID
         dict[0][lane_nr][well_nr]['ID'] = time_idx
+        # save last mean
+        dict[0][lane_nr][well_nr]['mean list'].append(mean_of_current_image)
+
+
 
     else:
         dict[0][lane_nr][well_nr]['LLPS status'] = False

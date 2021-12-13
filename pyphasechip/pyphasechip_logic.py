@@ -25,6 +25,7 @@ import csv
 import time
 from tqdm import tqdm
 import matplotlib.pyplot as plt
+from matplotlib.ticker import MaxNLocator
 
 from pyphasechip import pyphasechip_fun
 
@@ -110,30 +111,26 @@ def chamber_detection_and_mask_creation(n_concentrations, n_wells, bigdict, min_
     for conc_nr in tqdm(range(n_concentrations)):
         for n_rows_per_conc in range(2):
             for n_wells_per_row in range(n_wells):
-                circles = cv2.HoughCircles(bigdict[0][conc_nr][well_nr]['gray'], cv2.HOUGH_GRADIENT, dp=1,
-                                           minDist=50, param1=10,
+                circles = cv2.HoughCircles(bigdict[0][conc_nr][well_nr]['gray'], cv2.HOUGH_GRADIENT, dp=1.1,
+                                           minDist=450, param1=50, param2=40,
                                            minRadius=min_r_chamber, maxRadius=max_r_chamber)
 
-                n += 1
-                # print("run:", n)
-                # print("conc", conc_nr, "well", well_nr)
+                n += 1 # TODO: n needed? what does it?
 
-                if circles is None:
-                    print("No chamber could be detected, please adjust radius")
-                    print("conc", conc_nr, "well", well_nr)
-                    bigdict[0][conc_nr][well_nr]['circles'] = False
-                    bigdict[0][conc_nr][well_nr]['detected droplet'] = False
+                # create array to store droplet area
+                bigdict[0][conc_nr][well_nr]['areas'] = np.zeros(shape=(1, 2))
 
                 if circles is not None:
                     circles = np.uint16(np.around(circles))
-                    bigdict[0][conc_nr][well_nr]['circles'] = circles
+                    bigdict[0][conc_nr][well_nr]['well geometry'] = circles
 
-                    bigdict[0][conc_nr][well_nr]['well found'] = True
+                    bigdict[0][conc_nr][well_nr]['well status'] = True
 
                     # calculate mean
                     bigdict[0][conc_nr][well_nr]['init_mean'] = np.mean(bigdict[0][conc_nr][well_nr]['gray'])
 
                     # create mask
+                    # TODO: test if we can work without mask
                     bigdict[0][conc_nr][well_nr]['elon'] = \
                         pyphasechip_fun.create_mask(bigdict[0][conc_nr][well_nr]['gray'].copy(), circles)
 
@@ -141,88 +138,74 @@ def chamber_detection_and_mask_creation(n_concentrations, n_wells, bigdict, min_
                     bigdict[0][conc_nr][well_nr]['masked image'] = pyphasechip_fun.mask_image(
                         bigdict[0][conc_nr][well_nr]['gray'].copy(),
                         bigdict[0][conc_nr][well_nr]['elon'])
+                    #bigdict[0][conc_nr][well_nr]['masked image'] = bigdict[0][conc_nr][well_nr]['gray'].copy()
 
-                    ## detect contours in the image
-                    #contours, _, _, _ = pyphasechip_fun.detect_contours(bigdict[0][conc_nr][well_nr]['masked image'],
-                    #                                                    bigdict[0][conc_nr][well_nr]['init_mean'])
-                    #bigdict[0][conc_nr][well_nr]['contours'] = contours
 
-                    ## select droplet, and get all necessary information from it
-                    #area_droplet, _, _, contour_droplet, droplet_status = pyphasechip_fun.select_droplet_test(contours, 238)
-                    ## TODO: 238 -> jupyter script determinieren lassen
-                    #bigdict[0][conc_nr][well_nr]['contours droplet'] = contour_droplet
-
-                    # SWITCHED TO HOUGH FOR TESTING PURPOSES
                     # blur before Mr. Hough is always a good idea
                     temp = cv2.blur(bigdict[0][conc_nr][well_nr]['masked image'].copy(), (2, 2))
 
+                    # search for droplet within well
                     for i in range(10):
                         a = 0.99
-                        minradius = int(bigdict[0][conc_nr][well_nr]['circles'][0, 0, 2] * 0.4)
-                        maxradius = int(bigdict[0][conc_nr][well_nr]['circles'][0, 0, 2] * a)
+                        minradius = int(bigdict[0][conc_nr][well_nr]['well geometry'][0, 0, 2] * 0.4)
+                        maxradius = int(bigdict[0][conc_nr][well_nr]['well geometry'][0, 0, 2] * a)
 
                         detected_droplet = cv2.HoughCircles(temp,
                                                             cv2.HOUGH_GRADIENT, dp=1.1, minDist=150, param1=50,
-                                                            param2=40, minRadius=minradius, maxRadius=maxradius)
+                                                            param2=60, minRadius=minradius, maxRadius=maxradius)
 
-                        if detected_droplet is not None:
+                        if detected_droplet is not None and detected_droplet[0, 0, 2] < \
+                                bigdict[0][conc_nr][well_nr]['well geometry'][0, 0, 2]:
                             detected_droplet = np.uint16(np.around(detected_droplet))
-                            droplet_status = True
-                            bigdict[0][conc_nr][well_nr]['detected droplet'] = droplet_status
-                            bigdict[0][conc_nr][well_nr]['droplet information'] = detected_droplet
+                            bigdict[0][conc_nr][well_nr]['droplet status'] = True
+                            bigdict[0][conc_nr][well_nr]['droplet geometry'] = detected_droplet
                             # print(f"Droplet found in well t{time_idx}_c{conc_nr}_w{well_nr}")
                             break  # end loop when droplet is detected
 
                         else:
                             a -= 0.01
 
-                        if i == 9:
-                            print(f"no droplet could be found in well t{0}_c{conc_nr}_w{well_nr}")
+                        if i == 9:  # TODO: remove when works, not needed
+                            print(f"no droplet @ t0 for c{conc_nr}_w{well_nr}")
+                            bigdict[0][conc_nr][well_nr]['droplet status'] = False
                             # Print error massage if no droplet was found
-                            droplet_status = False
-                            bigdict[0][conc_nr][well_nr]['detected droplet'] = droplet_status
 
-                    if droplet_status is True:
+                    # if droplet could be found, save important stuff
+                    if bigdict[0][conc_nr][well_nr]['droplet status'] is True:
                         # calculate minimal distance from droplet center to edge
                         bigdict[0][conc_nr][well_nr]['minimal distance'] = \
-                            bigdict[0][conc_nr][well_nr]['droplet information'][
-                                0, 0, 2] * 0.8  # 80% of droplet radius
-                        cX_droplet = bigdict[0][conc_nr][well_nr]['droplet information'][0, 0, 0]
-                        cY_droplet = bigdict[0][conc_nr][well_nr]['droplet information'][0, 0, 1]
-                        area_droplet = 3.14159 * bigdict[0][conc_nr][well_nr]['droplet information'][0, 0, 2] ** 2
-                        radius_droplet = bigdict[0][conc_nr][well_nr]['droplet information'][0, 0, 2]
-                        radius_well = bigdict[0][conc_nr][well_nr]['circles'][0, 0, 2]
+                            bigdict[0][conc_nr][well_nr]['droplet geometry'][
+                                0, 0, 2] * 0.8  # 80% of droplet radius # TODO: 80% necessary? why not 100%
 
-                    # TODO: If hough works, take care of case where first detected droplet is smaller than chamber
-                    #  and also set droplet radius here
-                    if droplet_status is True:
-                        bigdict[0][conc_nr][well_nr]['droplet information'] = circles  # this is set for droplet detection in detect_LLPS
-                        bigdict[0][conc_nr][well_nr]['detected droplet'] = True
+                        area_droplet = 3.14159 * bigdict[0][conc_nr][well_nr]['droplet geometry'][0, 0, 2] ** 2
 
-
-                    # save area of droplet to array
-                    bigdict[0][conc_nr][well_nr]['areas'] = np.zeros(shape=(1, 2))
-
-                    if droplet_status is True and radius_droplet < radius_well:  # TODO: what is this equation?
+                        # save area of droplet to array
                         bigdict[0][conc_nr][well_nr]['areas'][0, 0] = area_droplet
-                    else:
-                        bigdict[0][conc_nr][well_nr]['areas'][0, 0] = (3.141*(238/2)**2)*1.1
-                        # TODO: 238 -> jupyter script
-                        # if droplet is not found in the first frame, it is assumed that it fills
-                        # the whole well and also parts of the channel, hence the 1.1 factor
 
+                    # if no droplet could be found, it is assumed for now that it exists and that is bigger than the
+                    # well itself, hence the 1.1 factor
+                    else:
+                        bigdict[0][conc_nr][well_nr]['areas'][0, 0] = (3.141*(238/2)**2)*1.1  # TODO: 238 jupyter script
+                        bigdict[0][conc_nr][well_nr]['droplet status'] = True
+                        bigdict[0][conc_nr][well_nr]['droplet geometry'] = bigdict[0][conc_nr][well_nr]['well geometry']
+
+                    # create list of means for processing later
                     bigdict[0][conc_nr][well_nr]['mean list'] = []
 
-                    # no LLPS yet (hopefully), save this information for processing later
+                    # no LLPS yet (hopefully :P ), save this information for processing later
                     bigdict[0][conc_nr][well_nr]['LLPS status'] = False
 
+                # if no well could be detected, set status accordingly
                 else:
-                    bigdict[0][conc_nr][well_nr]['well found'] = False
+                    print("No chamber could be detected, please adjust radius")
+                    print("conc", conc_nr, "well", well_nr)
+                    bigdict[0][conc_nr][well_nr]['well status'] = False
+                    bigdict[0][conc_nr][well_nr]['droplet status'] = False
 
                 # print('Name: 'f"{dict[0][conc_nr][well_nr]['name']}" ' Area: ', dict[0][conc_nr][well_nr]['areas'])
 
                 well_nr += 1
-            #well_nr += 0
+
         well_nr = 0
     well_nr = 0
 
@@ -237,63 +220,45 @@ def detect_LLPS(h, iph, n_concentrations, n_wells, bigdict, percental_threshold)
         for conc_nr in range(n_concentrations):
             for n_rows_per_conc in range(2):
                 for n_wells_per_row in range(n_wells):
-                    if bigdict[0][conc_nr][well_nr]['well found'] is True \
+                    if bigdict[0][conc_nr][well_nr]['well status'] is True \
                             and bigdict[0][conc_nr][well_nr]['LLPS status'] is False:
 
                         # mask image
+                        # TODO: test if we can work without mask
                         bigdict[time_idx][conc_nr][well_nr]['masked image'] = pyphasechip_fun.mask_image(
                             bigdict[time_idx][conc_nr][well_nr]['gray'].copy(),
                             bigdict[0][conc_nr][well_nr]['elon'])
+                        # bigdict[time_idx][conc_nr][well_nr]['masked image'] = bigdict[time_idx][conc_nr][well_nr]['gray'].copy()
 
-                        # detect contours in the image
-                        #bigdict[time_idx][conc_nr][well_nr]['contours'], threshed_img, mopped_up_img, dilated_img = pyphasechip_fun.detect_contours(
-                        #    bigdict[time_idx][conc_nr][well_nr]['masked image'],
-                        #    bigdict[0][conc_nr][well_nr]['init_mean'])
-                        #bigdict[time_idx][conc_nr][well_nr]['thresh'] = threshed_img
-                        #bigdict[time_idx][conc_nr][well_nr]['dilateanderode'] = mopped_up_img
-                        #bigdict[time_idx][conc_nr][well_nr]['dilate'] = dilated_img
-                        ## TODO: when script works, switch time_idx in 'contours' back to 0
-                        ## TODO: when script works, switch time_idx in 'thresh' back to 0
-                        ## TODO: when script works, switch time_idx in 'dilateanderode' back to 0
-                        ## TODO: when script works, switch time_idx in 'dilate' back to 0
-
-                        ## select droplet, and get all necessary information from it
-                        #area_droplet, cX_droplet, cY_droplet, contour_droplet, droplet_status = pyphasechip_fun.select_droplet_test(
-                        #    bigdict[time_idx][conc_nr][well_nr]['contours'], 238)
-                        #bigdict[time_idx][conc_nr][well_nr]['contours droplet'] = contour_droplet
-                        #bigdict[0][conc_nr][well_nr]['detected droplet'] = droplet_status
-                        ## TODO: when script works, switch time_idx in 'contours droplet' back to 0
-                        ## TODO: when script works, switch time_idx in 'contours' back to 0
-
-                        # hough circle test for droplet detection
-
-                        if bigdict[0][conc_nr][well_nr]['detected droplet'] is False:
-                            bigdict[0][conc_nr][well_nr]['droplet information'] = \
-                                bigdict[0][conc_nr][well_nr]['circles']
+                        # hough circle for droplet detection
+                        if bigdict[0][conc_nr][well_nr]['droplet status'] is False:
+                            bigdict[0][conc_nr][well_nr]['droplet geometry'] = \
+                                bigdict[0][conc_nr][well_nr]['well geometry']
 
                         # blur before Mr. Hough is always a good idea
                         temp = cv2.blur(bigdict[time_idx][conc_nr][well_nr]['masked image'].copy(), (2, 2))
 
+                        # detect droplet
                         for i in range(10):
-                            a = 0.97
-                            minradius = int(bigdict[0][conc_nr][well_nr]['circles'][0, 0, 2] * 0.4)
-                            maxradius = int(bigdict[0][conc_nr][well_nr]['circles'][0, 0, 2] * a)
+                            a = 0.97-0.01*(time_idx-3)
+                            minradius = int(bigdict[0][conc_nr][well_nr]['well geometry'][0, 0, 2] * 0.1)
+                            maxradius = int(bigdict[0][conc_nr][well_nr]['well geometry'][0, 0, 2] * a)
 
                             detected_droplet = cv2.HoughCircles(temp,
-                                                                cv2.HOUGH_GRADIENT, dp=1.1, minDist=150, param1=50,
+                                                                cv2.HOUGH_GRADIENT, dp=1.1, minDist=450, param1=50,
                                                                 param2=40, minRadius=minradius, maxRadius=maxradius)
 
-                            if time_idx > 3 and bigdict[0][conc_nr][well_nr]['detected droplet'] is True:
-                                previous_droplet_radius = bigdict[time_idx-1][conc_nr][well_nr]['droplet information'][0, 0, 2]
+                            if time_idx > 3 and bigdict[0][conc_nr][well_nr]['droplet status'] is True:
+                                previous_droplet_radius = bigdict[time_idx-1][conc_nr][well_nr]['droplet geometry'][0, 0, 2]
                             else:
-                                previous_droplet_radius = bigdict[0][conc_nr][well_nr]['droplet information'][0, 0, 2]
+                                previous_droplet_radius = bigdict[0][conc_nr][well_nr]['droplet geometry'][0, 0, 2]
 
                             if detected_droplet is not None and previous_droplet_radius >= detected_droplet[0, 0, 2]:
                                 detected_droplet = np.uint16(np.around(detected_droplet))
                                 droplet_status = True
-                                bigdict[0][conc_nr][well_nr]['detected droplet'] = droplet_status
-                                bigdict[time_idx][conc_nr][well_nr]['droplet information'] = detected_droplet
-                                #print(f"Droplet found in well t{time_idx}_c{conc_nr}_w{well_nr}")
+                                bigdict[0][conc_nr][well_nr]['droplet status'] = droplet_status
+                                bigdict[time_idx][conc_nr][well_nr]['droplet geometry'] = detected_droplet
+
                                 break  # end loop when droplet is detected
 
                             else:
@@ -303,16 +268,17 @@ def detect_LLPS(h, iph, n_concentrations, n_wells, bigdict, percental_threshold)
                                 print(f"no droplet could be found in well t{time_idx}_c{conc_nr}_w{well_nr}")
                                 # Print error massage if no droplet was found
                                 droplet_status = False
-                                bigdict[0][conc_nr][well_nr]['detected droplet'] = droplet_status
+                                bigdict[0][conc_nr][well_nr]['droplet status'] = droplet_status
 
                         if droplet_status is True:
 
                             # calculate minimal distance from droplet center to edge
                             bigdict[time_idx][conc_nr][well_nr]['minimal distance'] = \
-                                bigdict[time_idx][conc_nr][well_nr]['droplet information'][0, 0, 2]*0.8  # 80% of droplet radius
-                            cX_droplet = bigdict[time_idx][conc_nr][well_nr]['droplet information'][0, 0, 0]
-                            cY_droplet = bigdict[time_idx][conc_nr][well_nr]['droplet information'][0, 0, 1]
-                            area_droplet = 3.14159 * bigdict[0][conc_nr][well_nr]['droplet information'][0, 0, 2]**2
+                                bigdict[time_idx][conc_nr][well_nr]['droplet geometry'][0, 0, 2]*0.8  # 80% of droplet radius
+                            cX_droplet = bigdict[time_idx][conc_nr][well_nr]['droplet geometry'][0, 0, 0]
+                            cY_droplet = bigdict[time_idx][conc_nr][well_nr]['droplet geometry'][0, 0, 1]
+                            area_droplet = 3.14159 * bigdict[time_idx][conc_nr][well_nr]['droplet geometry'][0, 0, 2]**2
+                            
                             #bigdict[time_idx][conc_nr][well_nr]['minimal distance'] = pyphasechip_fun.minDistance(
                             #    contour_droplet,
                             #    cX_droplet,
@@ -324,10 +290,6 @@ def detect_LLPS(h, iph, n_concentrations, n_wells, bigdict, percental_threshold)
                                     bigdict[time_idx][conc_nr][well_nr]['masked image'], beta=-40)
                                 contrasted_old = cv2.convertScaleAbs(
                                     bigdict[(time_idx - 1)][conc_nr][well_nr]['masked image'], beta=-40)
-                                # TODO: remove, this is just a test
-                                #houghimg = pyphasechip_fun.hough_test(contour_droplet,
-                                #                                      bigdict[time_idx][conc_nr][well_nr]['gray'])
-                                #bigdict[time_idx][conc_nr][well_nr]['hough'] = houghimg
 
                                 # subtract current img from old
                                 bigdict[time_idx][conc_nr][well_nr]['subtracted'] = cv2.subtract(
@@ -346,9 +308,6 @@ def detect_LLPS(h, iph, n_concentrations, n_wells, bigdict, percental_threshold)
                                 #print(f"{mean}, t{time_idx}_well{conc_nr}_{well_nr}")
                                 pyphasechip_fun.LLPS_detection(mean, percental_threshold, area_droplet,
                                                                bigdict, time_idx, conc_nr, well_nr)
-                                # dict[0][conc_nr][well_nr]['mean list'],
-                                # print('Name: 'f"{dict[time_idx][conc_nr][well_nr]['name']}" ' Area: ', dict[
-                                # 0][conc_nr][well_nr]['areas'])
 
                     well_nr += 1
             well_nr = 0
@@ -367,7 +326,7 @@ def ccrit_calculation(initc_sol1, initc_sol2, init_ratio, h, iph, n_concentratio
         for conc_nr in range (n_concentrations):
             for n_rows_per_conc in range(2):
                 for n_wells_per_row in range(n_wells):
-                    if bigdict[0][conc_nr][well_nr]['well found'] is True and \
+                    if bigdict[0][conc_nr][well_nr]['well status'] is True and \
                             bigdict[0][conc_nr][well_nr]['LLPS status'] is True:
                         bigdict[0][conc_nr][well_nr]['LLPS conc'] = np.zeros(shape=(1, 2))
                         # c_crit = area_start/area_end*c_start
@@ -390,8 +349,8 @@ def ccrit_calculation(initc_sol1, initc_sol2, init_ratio, h, iph, n_concentratio
 def quality_control(bigdict, time_idx, conc_nr, well_nr, name_sol1, name_sol2, unit_sol1, unit_sol2,
                     starting_concentrations, circles):
     # Status
-    print("Well found: ", bigdict[0][conc_nr][well_nr]['well found'])
-    print("Droplet found: ", bigdict[0][conc_nr][well_nr]['detected droplet'])
+    print("Well found: ", bigdict[0][conc_nr][well_nr]['well status'])
+    print("Droplet found: ", bigdict[0][conc_nr][well_nr]['droplet status'])
     print("LLPS found: ", bigdict[0][conc_nr][well_nr]['LLPS status'])
     print("file name: ", bigdict[0][conc_nr][well_nr]['LLPS name'])
     print(" ")
@@ -400,7 +359,7 @@ def quality_control(bigdict, time_idx, conc_nr, well_nr, name_sol1, name_sol2, u
     print(starting_concentrations)
 
     # concentrations and areas
-    if bigdict[0][conc_nr][well_nr]['well found'] is True \
+    if bigdict[0][conc_nr][well_nr]['well status'] is True \
             and bigdict[0][conc_nr][well_nr]['LLPS status'] is True:
         print(' ')
         print('LLPS concentrations:')
@@ -412,7 +371,7 @@ def quality_control(bigdict, time_idx, conc_nr, well_nr, name_sol1, name_sol2, u
 
     fig = plt.figure(figsize=(15, 30))
     ax1 = fig.add_subplot(5,2,1)
-    ax1.set_title('gray')
+    ax1.set_title('gray img of requested t')
     ax1.imshow(bigdict[time_idx][conc_nr][well_nr]['gray'].copy())
 
     if circles is not None:
@@ -422,42 +381,35 @@ def quality_control(bigdict, time_idx, conc_nr, well_nr, name_sol1, name_sol2, u
             radius = (i[2])
             circles_img = cv2.circle(bigdict[0][conc_nr][well_nr]['gray'].copy(), center, radius, (0, 0, 0), 1)
 
-            ax2 = fig.add_subplot(5,2,2)
-            ax2.set_title('found circles')
+            ax2 = fig.add_subplot(5, 2, 2)
+            ax2.set_title('detected well')
             ax2.imshow(circles_img)
 
-    if bigdict[0][conc_nr][well_nr]['well found'] is True:
-        ax3 = fig.add_subplot(5,2,3)
-        ax3.set_title('threshed')
-        ax3.imshow(bigdict[time_idx][conc_nr][well_nr]['thresh'])
+            if bigdict[0][conc_nr][well_nr]['droplet status']:
+                ax3 = fig.add_subplot(5, 2, 3)
+                for i in bigdict[0][conc_nr][well_nr]['droplet geometry'][0, :]:
+                    center = (i[0], i[1])
+                    # circle outline
+                    radius = (i[2])
+                    droplet_img = cv2.circle(bigdict[0][conc_nr][well_nr]['gray'].copy(), center, radius, (0, 0, 0), 1)
 
-        ax4 = fig.add_subplot(5, 2, 4)
-        ax4.set_title('after mop-up')
-        ax4.imshow(bigdict[time_idx][conc_nr][well_nr]['dilateanderode'])
+                    ax3.set_title('found droplet at t0')
+                    ax3.imshow(droplet_img)
 
-        ax5 = fig.add_subplot(5, 2, 5)
-        ax5.set_title('dilated')
-        ax5.imshow(bigdict[time_idx][conc_nr][well_nr]['dilate'])
-
-        allcontours_img = cv2.drawContours(bigdict[time_idx][conc_nr][well_nr]['gray'].copy(),
-                                           bigdict[0][conc_nr][well_nr]['contours'], -1, (255, 165, 0), 2)
-        ax6 = fig.add_subplot(5, 2, 6)
-        ax6.set_title('all detected contours')
-        ax6.imshow(allcontours_img)
-
-        if bigdict[0][conc_nr][well_nr]['detected droplet'] is True:
-
-            selectedcontours_img = cv2.drawContours(bigdict[time_idx][conc_nr][well_nr]['gray'].copy(),
-                                                    bigdict[time_idx][conc_nr][well_nr]['contours droplet'], -1,
-                                                    (255, 165, 0), 2)
-            ax7 = fig.add_subplot(5, 2, 7)
-            ax7.set_title('selected contours')
-            ax7.imshow(selectedcontours_img)
+            ax4 = fig.add_subplot(5, 2, 4)
+            ax4.plot(np.arange(len(bigdict[0][conc_nr][well_nr]['mean list'])),
+                     bigdict[0][conc_nr][well_nr]['mean list'], marker='o', label="mean values")
+            ax4.set_xlabel('image nr')
+            ax4.set_ylabel('avg. mean of droplet')
+            ax4.set_ylim([2,4])
+            ax4.xaxis.set_major_locator(MaxNLocator(integer=True))
+            ax4.set_xlim([0,2])
+        if bigdict[0][conc_nr][well_nr]['droplet status'] is True:
 
             if time_idx > 0:
                 ax8 = fig.add_subplot(5, 2, 8)
                 ax8.set_title('subtraction result')
-                ax8.imshow(bigdict[time_idx][conc_nr][well_nr]['subtracted'])
+                ax8.imshow(bigdict[time_idx][conc_nr][well_nr]['subtracted'], cmap='gray')
                 ax9 = fig.add_subplot(5, 2, 9)
                 ax9.set_title('squircle result')
                 ax9.imshow(bigdict[time_idx][conc_nr][well_nr]['pixel values'])
@@ -465,7 +417,7 @@ def quality_control(bigdict, time_idx, conc_nr, well_nr, name_sol1, name_sol2, u
     print("List of Means")
     print(bigdict[0][conc_nr][well_nr]['mean list'])
 
-    if bigdict[0][conc_nr][well_nr]['well found'] is True \
+    if bigdict[0][conc_nr][well_nr]['well status'] is True \
             and bigdict[0][conc_nr][well_nr]['LLPS status'] is True:
 
         fig2, ((ax11, ax12), (ax13, ax14)) = plt.subplots(2, 2, figsize=(15, 15))
@@ -474,7 +426,7 @@ def quality_control(bigdict, time_idx, conc_nr, well_nr, name_sol1, name_sol2, u
         A_11 = bigdict[((bigdict[0][conc_nr][well_nr]['ID']) - 2)][conc_nr][well_nr]['masked image'].copy()
         A_12 = bigdict[((bigdict[0][conc_nr][well_nr]['ID']) - 1)][conc_nr][well_nr]['masked image'].copy()
         # at LLPS detection
-        grimes = bigdict[(bigdict[0][conc_nr][well_nr]['ID'])][conc_nr][well_nr]['masked image'].copy()
+        grimes = bigdict[(bigdict[0][conc_nr][well_nr]['ID'])][conc_nr][well_nr]['gray'].copy()
 
         ax11.imshow(A_10, cmap='gray')
         ax11.set_title('three t before LLPS detection')
@@ -506,7 +458,7 @@ def save_results_to_csv(bigdict, image_folder, n_concentrations, n_wells, h, iph
         for conc_nr in range(n_concentrations):
             for n_rows_per_conc in range(2):
                 for n_wells_per_row in range(n_wells):
-                    if bigdict[0][conc_nr][well_nr]['well found'] is True and \
+                    if bigdict[0][conc_nr][well_nr]['well status'] is True and \
                             bigdict[0][conc_nr][well_nr]['LLPS status'] is True:
                         writer.writerow(
                             [bigdict[0][conc_nr][well_nr]['LLPS name'], bigdict[0][conc_nr][well_nr]['LLPS conc'][0, 0],
