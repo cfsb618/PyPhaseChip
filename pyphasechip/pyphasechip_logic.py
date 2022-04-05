@@ -163,7 +163,7 @@ def chamber_detection_and_mask_creation(n_concentrations, n_wells, bigdict, min_
                             a -= 0.01
 
                         if i == 9:  # TODO: remove when works, not needed
-                            print(f"no droplet @ t0 for c{conc_nr}_w{well_nr}")
+                            # print(f"no droplet @ t0 for c{conc_nr}_w{well_nr}")
                             bigdict[0][conc_nr][well_nr]['droplet status'] = False
                             # Print error massage if no droplet was found
 
@@ -172,7 +172,7 @@ def chamber_detection_and_mask_creation(n_concentrations, n_wells, bigdict, min_
                         # calculate minimal distance from droplet center to edge
                         bigdict[0][conc_nr][well_nr]['minimal distance'] = \
                             bigdict[0][conc_nr][well_nr]['droplet geometry'][
-                                0, 0, 2] * 0.8  # 80% of droplet radius # TODO: 80% necessary? why not 100%
+                                0, 0, 2] * 0.95  # 95% of droplet radius
 
                         area_droplet = 3.14159 * bigdict[0][conc_nr][well_nr]['droplet geometry'][0, 0, 2] ** 2
 
@@ -213,7 +213,8 @@ def detect_LLPS(h, iph, n_concentrations, n_wells, bigdict, percental_threshold)
     print("LLPS detection")
     time.sleep(0.5)
     well_nr = 0
-    for time_idx in tqdm(range(3, int(h * iph))):  ##### CHANGED 1 to 3 for HOUGH CIRCLE
+    thresh_val_list = []
+    for time_idx in tqdm(range(1, int(h * iph))):
         for conc_nr in range(n_concentrations):
             for n_rows_per_conc in range(2):
                 for n_wells_per_row in range(n_wells):
@@ -275,9 +276,7 @@ def detect_LLPS(h, iph, n_concentrations, n_wells, bigdict, percental_threshold)
                             area_droplet = 3.14159 * bigdict[time_idx][conc_nr][well_nr]['droplet geometry'][0, 0, 2]**2
                             
                             #bigdict[time_idx][conc_nr][well_nr]['minimal distance'] = pyphasechip_fun.minDistance(
-                            #    contour_droplet,
-                            #    cX_droplet,
-                            #    cY_droplet)
+                            #    contour_droplet, cX_droplet, cY_droplet)
 
                             if time_idx > 3:
                                 # adjust contrast
@@ -286,21 +285,33 @@ def detect_LLPS(h, iph, n_concentrations, n_wells, bigdict, percental_threshold)
                                 contrasted_old = cv2.convertScaleAbs(
                                     bigdict[(time_idx - 1)][conc_nr][well_nr]['masked image'], beta=-40)
 
+                                # determine threshold value
+                                thresh_val = 215
+
+                                blur = cv2.blur(bigdict[time_idx][conc_nr][well_nr]['masked image'].copy(), (4, 4))
+                                ret, bigdict[time_idx][conc_nr][well_nr]['thresh'] =\
+                                    cv2.threshold(blur, thresh_val, 255, cv2.THRESH_BINARY_INV)
+
+                                blur2 = cv2.blur(bigdict[time_idx - 1][conc_nr][well_nr]['masked image'].copy(), (4, 4))
+                                ret, bigdict[time_idx - 1][conc_nr][well_nr]['thresh'] = \
+                                    cv2.threshold(blur2, thresh_val, 255,
+                                                  cv2.THRESH_BINARY_INV)
                                 # subtract current img from old
                                 bigdict[time_idx][conc_nr][well_nr]['subtracted'] = cv2.subtract(
-                                    contrasted_current, contrasted_old)
+                                     bigdict[time_idx][conc_nr][well_nr]['thresh'], bigdict[time_idx-1][conc_nr][well_nr]['thresh'])
 
                                 # calculate pixel values within squircle inside droplet
+                                # TODO: changed subtracted to thresh, see above
                                 bigdict[time_idx][conc_nr][well_nr]['pixel values'] = pyphasechip_fun.squircle_iteration(
                                     bigdict[time_idx][conc_nr][well_nr]['subtracted'], cX_droplet, cY_droplet,
                                     int(bigdict[time_idx][conc_nr][well_nr]['minimal distance']))
 
                                 # calculate mean of pixel values
-                                mean = (np.sum(bigdict[time_idx][conc_nr][well_nr]['pixel values']) /
-                                        np.count_nonzero(bigdict[time_idx][conc_nr][well_nr]['pixel values']))
+                                mean = (np.sum(bigdict[time_idx][conc_nr][well_nr]['pixel values']))# /
+                                        #np.count_nonzero(bigdict[time_idx][conc_nr][well_nr]['pixel values']))
+                                print(time_idx,conc_nr,well_nr, mean)
 
                                 # Detector
-                                #print(f"{mean}, t{time_idx}_well{conc_nr}_{well_nr}")
                                 pyphasechip_fun.LLPS_detection(mean, percental_threshold, area_droplet,
                                                                bigdict, time_idx, conc_nr, well_nr)
 
@@ -396,15 +407,16 @@ def quality_control(bigdict, time_idx, conc_nr, well_nr, name_sol1, name_sol2, u
                      bigdict[0][conc_nr][well_nr]['mean list'], marker='o', label="mean values")
             ax4.set_xlabel('image nr')
             ax4.set_ylabel('avg. mean of droplet')
-            ax4.set_ylim([2,4])
+            ax4.set_ylim([min(bigdict[0][conc_nr][well_nr]['mean list'])-0.5,
+                          max(bigdict[0][conc_nr][well_nr]['mean list'])+0.5])
             ax4.xaxis.set_major_locator(MaxNLocator(integer=True))
-            ax4.set_xlim([0,2])
+            ax4.set_xlim([0, len(bigdict[0][conc_nr][well_nr]['mean list'])-1])
         if bigdict[0][conc_nr][well_nr]['droplet status'] is True:
 
             if time_idx > 0:
                 ax8 = fig.add_subplot(5, 2, 8)
                 ax8.set_title('subtraction result')
-                ax8.imshow(bigdict[time_idx][conc_nr][well_nr]['subtracted'], cmap='gray')
+                ax8.imshow(bigdict[time_idx][conc_nr][well_nr]['thresh'], cmap='gray')
                 ax9 = fig.add_subplot(5, 2, 9)
                 ax9.set_title('squircle result')
                 ax9.imshow(bigdict[time_idx][conc_nr][well_nr]['pixel values'])
@@ -460,7 +472,6 @@ def save_results_to_csv(bigdict, image_folder, n_concentrations, n_wells, h, iph
                              bigdict[0][conc_nr][well_nr]['LLPS conc'][0, 1]])
 
                     well_nr += 1
-                #well_nr += 1
             well_nr = 0
 
         writer.writerow(" ")

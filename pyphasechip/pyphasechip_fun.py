@@ -343,7 +343,7 @@ def __squircle_iterator(cX_droplet, cY_droplet):
 
 # store selected pixels (more importantly their values) in new array
 def squircle_iteration(img, x0, y0, radius):
-    radius = radius*0.9
+    radius *= 0.9
     z = np.zeros(shape=(len(img[:, 0]), len(img[0, :])))
     for (idx1, idx2) in __squircle_iterator(x0, y0):
         if (idx1 - x0) ** 2 + (idx2 - y0) ** 2 < radius ** 2:
