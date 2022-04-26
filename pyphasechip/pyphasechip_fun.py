@@ -93,31 +93,300 @@ def controller(img, brightness=255, contrast=127):
 
     return cal
 
+
+# find the well with the help of hough
+def find_well(img: np.ndarray, diameter: int, n: float, m: float):
+    dp = 1.1
+    minDist = 450
+    param1 = 50
+    param2 = 40
+    min_r_chamber = int((diameter / 2) * n)
+    max_r_chamber = int((diameter / 2) * m)
+
+    circles = cv2.HoughCircles(img, cv2.HOUGH_GRADIENT,
+                               dp=dp, minDist=minDist, param1=param1, param2=param2,
+                               minRadius=min_r_chamber, maxRadius=max_r_chamber)
+    if circles is not None:
+        circles = np.uint16(np.around(circles))
+        circles_for_dict = circles
+        # x, y, radius = circles[0][0]
+        x = circles_for_dict[0, 0, 0]
+        y = circles_for_dict[0, 0, 1]
+        r = circles_for_dict[0, 0, 2]
+    else:
+        x = 0
+        y = 0
+        r = 0
+
+    return x, y, r
+
+
+# little algorithm to find the well reliably
+def find_well_algo(img: np.ndarray, saved_points: np.ndarray, diameter: int, dev: int):
+    n = 0.95
+    m = 1.05
+    a = 0
+
+    # initial detection
+    x, y, r = find_well(img, diameter, n, m)
+
+    saved_points[0, 0] = x
+    saved_points[0, 1] = y
+    saved_points[0, 2] = r
+
+    # tries to makes shure that a well is detected
+    while saved_points[0, 0] == 0 and a < 5:
+        n -= 0.02
+        m += 0.05
+        a += 1
+        print("pos. first time counter", a)
+        x, y, r = find_well(img, diameter, n, m)
+        saved_points[0, 0] = x
+        saved_points[0, 1] = y
+        saved_points[0, 2] = r
+
+    # checks if in last image a well was detected
+    # if so, checks if the current position of the well deviates too much from the old one
+    if saved_points[1, 0] != 0:
+        a = 0
+        x_dif = abs(100 - x / saved_points[1, 0] * 100)
+        y_dif = abs(100 - y / saved_points[1, 1] * 100)
+        r_dif = abs(100 - r / saved_points[1, 2] * 100)
+
+        while (x_dif > dev or y_dif > dev or r_dif > dev) and a < 5:
+            n -= 0.02
+            m += 0.05
+            a += 1
+            print("- pos. deviation counter", a)
+            x, y, r = find_well(img, diameter, n, m)
+            x_dif = abs(100 - x / saved_points[1, 0] * 100)
+            y_dif = abs(100 - y / saved_points[1, 1] * 100)
+            r_dif = abs(100 - r / saved_points[1, 2] * 100)
+
+    # Account for the case where no well can be found
+    if a == 5 or saved_points[0, 0] == 0:
+        well_found = False
+    else:
+        well_found = True
+    print("- well found:", well_found)
+
+    return x, y, r, saved_points, well_found
+
+
 # create mask
-def create_mask(img, circles_from_hc_detection):
+def create_mask(img, mask, saved_points, x, y, r, dev: int):
     # read information from circle detection
-    x0 = circles_from_hc_detection[0, 0, 0]
-    y0 = circles_from_hc_detection[0, 0, 1]
-    radius = circles_from_hc_detection[0, 0, 2]*1.2
+    x0 = x
+    y0 = y
+    radius = r * 1.05
 
-    # create 1 elon mask
-    elon_mask = np.zeros(shape=img.shape, dtype="uint8")
+    # checks if well position in current img differs too much from
+    # well position in previous img
+    if saved_points[1, 0] != 0:
+        x_dif = abs(100 - x / saved_points[1, 0] * 100)
+        y_dif = abs(100 - y / saved_points[1, 1] * 100)
+        r_dif = abs(100 - r / saved_points[1, 2] * 100)
 
-    # iterate over image, equ. checks if pixel is part of the circle
-    for idx1 in range(img.shape[0]):
-        for idx2 in range(img.shape[1]):
-            if (idx2 - x0) ** 2 + (idx1 - y0) ** 2 < radius ** 2:
-                elon_mask[idx1][idx2] = 255
+        if x_dif > dev or y_dif > dev or r_dif > dev:
+            elon_mask = np.zeros(shape=img.shape, dtype="uint8")
+            # iterate over image, equ. checks if pixel is part of the circle
+            for idx1 in range(img.shape[0]):
+                for idx2 in range(img.shape[1]):
+                    if (idx2 - x0) ** 2 + (idx1 - y0) ** 2 < radius ** 2:
+                        elon_mask[idx1][idx2] = 255
+        else:
+            elon_mask = mask
+    else:
+        elon_mask = mask
+        # iterate over image, equ. checks if pixel is part of the circle
+        for idx1 in range(img.shape[0]):
+            for idx2 in range(img.shape[1]):
+                if (idx2 - x0) ** 2 + (idx1 - y0) ** 2 < radius ** 2:
+                    elon_mask[idx1][idx2] = 255
 
-    return elon_mask
+    saved_points[1, 0] = x
+    saved_points[1, 1] = y
+    saved_points[1, 2] = r
+
+    return elon_mask, saved_points
 
 
 # masking image
 def mask_image(img, elon_mask):
-    img[elon_mask == 0] = 209
+    img[elon_mask == 0] = 255
     img[elon_mask != 0] = img[elon_mask != 0]
 
     return img
+
+
+def image_manipulation(masked_img, x, y, r):
+    img_circle = cv2.circle(masked_img, (x, y), r, (200, 0, 0), 5)
+    blur = cv2.blur(img_circle.copy(), (5, 5))
+    thresh_adpt = cv2.adaptiveThreshold(blur.copy(), 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
+    morph = cv2.morphologyEx(thresh_adpt.copy(), cv2.MORPH_CLOSE, (8, 8), iterations=1)
+    #morph = cv2.erode(thresh_adpt, (5, 5), iterations=5)
+    img = cv2.dilate(morph.copy(), (2, 2), iterations=1)
+
+    return img
+
+
+def calculate_profile_plot_coordinates(x, y, r):
+    f = 1.1
+    W = int(x - f * r)
+    E = int(x + f * r)
+    N = int(y - f * r)
+    S = int(y + f * r)
+
+    return f, N, E, S, W
+
+
+def set_profile_plots(img, N, E, S, W, x, y, r):
+    horizontal = []
+    vertical = []
+
+    horizontal.append(img[int(y - 1.5 * r / 2), W:E])
+    horizontal.append(img[int(y - r / 2), W:E])
+    horizontal.append(img[int(y - 0.5 * r / 2), W:E])
+    horizontal.append(img[y, W:E])
+    horizontal.append(img[int(y + 0.5 * r / 2), W:E])
+    horizontal.append(img[int(y + r / 2), W:E])
+    horizontal.append(img[int(y + 1.5 * r / 2), W:E])
+
+    vertical.append(img[N:S, int(x - 1.5 * r / 2)])
+    vertical.append(img[N:S, int(x - r / 2)])
+    vertical.append(img[N:S, int(x - 0.5 * r / 2)])
+    vertical.append(img[N:S, x])
+    vertical.append(img[N:S, int(x + 0.5 * r / 2)])
+    vertical.append(img[N:S, int(x + r / 2)])
+    vertical.append(img[N:S, int(x + 1.5 * r / 2)])
+
+    length_hor = np.arange(horizontal[0].size)
+    length_vert = np.arange(vertical[0].size)
+    length_array = len(length_hor)
+
+    return length_hor, length_vert, length_array, horizontal, vertical
+
+
+def normalise_profile_plot_length(norm_peaks):
+    delta = np.zeros(7)
+    delta_edges = 0
+    cubic_norm_peaks = np.zeros(shape=(7, len(norm_peaks[3])))
+
+    # get index of first 0 from the left of middle array
+    for idx, val in enumerate(norm_peaks[3]):
+        if val == 0:
+            outer_edge_well = idx
+            break
+
+    for n in (0, 1, 2, 4, 5, 6):
+        add = []
+        temp = norm_peaks[n].copy()
+
+        # now get first 0 val from other arrays and calculate difference
+        for idx, val in enumerate(norm_peaks[n]):
+            if val == 0:
+                edge_well = idx
+                delta_edges = edge_well - outer_edge_well
+                break
+
+        delta[n] = delta_edges
+        max_len = len(temp) - 1
+
+        # delete values from the right...
+        for i in range(int(delta[n])):
+            i_minus = int(max_len - i)
+            temp = np.delete(temp, i_minus)
+
+        # ...and from the left
+        for i in range(int(delta[n])):
+            del_idx = int(delta[n] - i)
+            temp = np.delete(temp, del_idx)
+            for a in range(2):
+                add.append(np.max(temp))
+
+        mid = int(len(temp) / 2)
+        cubic_norm_peaks[n] = np.insert(temp, mid, add)
+    cubic_norm_peaks[3] = norm_peaks[3]
+
+    return cubic_norm_peaks
+
+
+def thresh_pp(cubic_norm_peaks):
+    for idx, val in enumerate():
+        print()
+    return
+
+
+def compute_droplet_from_peaks(x: int, y: int, r: int, f: float, pp_arrays: np.ndarray, centerpoints: np.ndarray,
+                               n: int):
+
+    # n can be 0 for horizontal or 1 for vertical
+    edges_idx = np.zeros(shape=(2, 2))
+    start_x = int(x - r * f)  # x-values where the horizontal lines start
+    start_y = int(y - r * f)  # y-values where the horizontal lines start
+    centerpoints_rel = np.zeros(shape=(2, 7))
+    radii_temp = np.zeros(7)
+    delta_centerpoints = np.zeros(7)
+
+    # accounts for a moving droplet center
+    if centerpoints[0, n] == 0:
+        mid = int(len(pp_arrays[3]) / 2)
+    else:
+        centerpoints[1, n] = centerpoints[0, n]
+        mid = int(centerpoints[1, n])
+
+    # Dinesh: is there a better way to code this?
+    # "walk" right/left from center until value is equal 0, save idx, this is our edge
+    for j in range(len(pp_arrays)):
+        for i in range(mid):
+            if pp_arrays[j][mid + i] == 0:
+                edges_idx[n, 0] = mid + i
+                break
+
+        for i in range(mid):
+            if pp_arrays[j][mid - i] == 0:
+                edges_idx[n, 1] = mid - i
+                break
+
+        centerpoints_rel[n, j] = int((edges_idx[n, 0] + edges_idx[n, 1]) / 2)
+        radii_temp[j] = np.subtract(edges_idx[n, 0], edges_idx[n, 1])
+
+    # filter
+    # if value deviates too much from avg, set it to zero
+    avg = np.sum(centerpoints_rel[n, :]) / np.count_nonzero(centerpoints_rel[n, :])
+    for j in range(7):
+        delta_centerpoints[j] = abs((centerpoints_rel[n, j]/avg) * 100 - 100)
+
+    while np.max(delta_centerpoints) > 15:
+        for idx, val in enumerate(delta_centerpoints):
+            if val == np.max(delta_centerpoints):
+                centerpoints_rel[n, idx] = 0
+                delta_centerpoints[idx] = 0
+                break
+
+        avg = np.sum(centerpoints_rel[n, :]) / np.count_nonzero(centerpoints_rel[n, :])
+        for j in range(7):
+            if delta_centerpoints[j] != 0:
+                delta_centerpoints[j] = abs((centerpoints_rel[n, j] / avg) * 100 - 100)
+
+    print(centerpoints_rel)
+
+    # calculate centerpoint
+    centerpoint_rel = int(np.sum(centerpoints_rel[n, :])/np.count_nonzero(centerpoints_rel[n, :]))
+
+    # choose which start value is needed
+    if n == 0:
+        start_value = start_x
+    else:
+        start_value = start_y
+
+    centerpoint_abs = centerpoint_rel + start_value
+    centerpoints[0, n] = centerpoint_rel
+
+    radius = np.max(radii_temp)
+    droplet_found = True
+
+    return centerpoint_abs, centerpoints, radius, droplet_found
 
 
 # Contour detection
@@ -354,34 +623,28 @@ def squircle_iteration(img, x0, y0, radius):
 
 
 # LLPS detector
-def LLPS_detection(mean_of_current_image, percental_threshold, area_droplet, dict, time_idx, lane_nr, well_nr):
-    if len(dict[0][lane_nr][well_nr]['mean list']) >= 1:
-        avg_mean_all_previous_images = np.mean(dict[0][lane_nr][well_nr]['mean list'])
+def LLPS_detection(mean_of_current_image, percental_threshold, area_droplet, areas, mean_list):
+    if len(mean_list) >= 1:
+        avg_mean_all_previous_images = np.mean(mean_list)
     else:
         avg_mean_all_previous_images = mean_of_current_image
-    # print(time_idx, lane_nr, well_nr)
     # print("current",mean_of_current_image)
     # print("avg",avg_mean_all_previous_images)
     # Calculate percental difference between current mean value and average mean of all previous images
     percental_difference = (mean_of_current_image / avg_mean_all_previous_images) * 100 - 100
 
     if percental_difference > percental_threshold:
-        dict[0][lane_nr][well_nr]['LLPS status'] = True
-        # save name of image where LLPS was detected
-        dict[0][lane_nr][well_nr]['LLPS name'] = dict[time_idx][lane_nr][well_nr]['name']
+        llps_status = True
         # save area to array
-        dict[0][lane_nr][well_nr]['areas'][0, 1] = area_droplet
-        # save img ID
-        dict[0][lane_nr][well_nr]['ID'] = time_idx
+        areas[0, 1] = area_droplet
         # save last mean
-        dict[0][lane_nr][well_nr]['mean list'].append(mean_of_current_image)
-
-
-
+        mean_list.append(mean_of_current_image)
     else:
-        dict[0][lane_nr][well_nr]['LLPS status'] = False
+        llps_status = False
         # save mean to mean list
-        dict[0][lane_nr][well_nr]['mean list'].append(mean_of_current_image)
+        mean_list.append(mean_of_current_image)
+
+    return llps_status, areas, mean_list
 
 
 def hough_test(dropletcontours, grayimg):
