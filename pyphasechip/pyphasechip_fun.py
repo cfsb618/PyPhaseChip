@@ -20,31 +20,6 @@ https://github.com/dineshpinto
 import cv2
 import numpy as np
 
-
-# calculate starting concentrations
-def starting_concentration(initial_conc_solution1, initial_conc_solution2, initial_ratio):
-    starting_conc = np.zeros(shape=(5, 2))
-    # [:,0] = solution 1, [:,1] = solution 2
-
-    # conc. in lane 1 (outer left)
-    starting_conc[0, 0] = initial_conc_solution1 / initial_ratio * (initial_ratio - 1)
-    starting_conc[0, 1] = initial_conc_solution2 / initial_ratio * 1
-    # conc. in lane 5 (outer right)
-    starting_conc[4, 0] = initial_conc_solution1 / initial_ratio * 1
-    starting_conc[4, 1] = initial_conc_solution2 / initial_ratio * (initial_ratio - 1)
-    # conc. in lane 3 (middle)
-    starting_conc[2, 0] = (starting_conc[0, 0] + starting_conc[4, 0]) / 2
-    starting_conc[2, 1] = (starting_conc[0, 1] + starting_conc[4, 1]) / 2
-    # conc. in lane 2
-    starting_conc[1, 0] = (starting_conc[0, 0] + starting_conc[2, 0]) / 2
-    starting_conc[1, 1] = (starting_conc[0, 1] + starting_conc[2, 1]) / 2
-    # conc. in lane 4
-    starting_conc[3, 0] = (starting_conc[2, 0] + starting_conc[4, 0]) / 2
-    starting_conc[3, 1] = (starting_conc[2, 1] + starting_conc[4, 1]) / 2
-
-    return starting_conc
-
-
 # TEST
 # adjust brightness & contrast
 def controller(img, brightness=255, contrast=127):
@@ -267,7 +242,7 @@ def set_profile_plots(img, N, E, S, W, x, y, r):
     return length_hor, length_vert, length_array, horizontal, vertical
 
 
-def normalise_profile_plot_length(norm_peaks):
+def normalise_profile_plot_length(norm_peaks, centerpoints, m):
     delta = np.zeros(7)
     delta_edges = 0
     cubic_norm_peaks = np.zeros(shape=(7, len(norm_peaks[3])))
@@ -304,29 +279,26 @@ def normalise_profile_plot_length(norm_peaks):
             for a in range(2):
                 add.append(np.max(temp))
 
-        mid = int(len(temp) / 2)
+        if centerpoints[0, m] != 0:
+            mid = int(centerpoints[0, m])
+        else:
+            mid = int(len(temp) / 2)
         cubic_norm_peaks[n] = np.insert(temp, mid, add)
     cubic_norm_peaks[3] = norm_peaks[3]
 
     return cubic_norm_peaks
 
 
-def thresh_pp(cubic_norm_peaks):
-    for idx, val in enumerate():
-        print()
-    return
-
-
 def compute_droplet_from_peaks(x: int, y: int, r: int, f: float, pp_arrays: np.ndarray, centerpoints: np.ndarray,
-                               n: int):
+                               n: int, radius_old: np.ndarray):
 
     # n can be 0 for horizontal or 1 for vertical
     edges_idx = np.zeros(shape=(2, 2))
     start_x = int(x - r * f)  # x-values where the horizontal lines start
     start_y = int(y - r * f)  # y-values where the horizontal lines start
-    centerpoints_rel = np.zeros(shape=(2, 7))
-    radii_temp = np.zeros(7)
-    delta_centerpoints = np.zeros(7)
+    mid_rel_pp_plots = np.zeros(shape=(2, 7))
+    dia_temp = np.zeros(7)
+    delta_midpoints = np.zeros(7)
 
     # accounts for a moving droplet center
     if centerpoints[0, n] == 0:
@@ -334,59 +306,93 @@ def compute_droplet_from_peaks(x: int, y: int, r: int, f: float, pp_arrays: np.n
     else:
         centerpoints[1, n] = centerpoints[0, n]
         mid = int(centerpoints[1, n])
+    print("mid_start:", mid)
 
-    # Dinesh: is there a better way to code this?
     # "walk" right/left from center until value is equal 0, save idx, this is our edge
     for j in range(len(pp_arrays)):
-        for i in range(mid):
+        for i in range(len(pp_arrays[j])-mid):
             if pp_arrays[j][mid + i] == 0:
-                edges_idx[n, 0] = mid + i
+                edges_idx[n, 1] = mid + i
                 break
 
         for i in range(mid):
             if pp_arrays[j][mid - i] == 0:
-                edges_idx[n, 1] = mid - i
+                edges_idx[n, 0] = mid - i
                 break
 
-        centerpoints_rel[n, j] = int((edges_idx[n, 0] + edges_idx[n, 1]) / 2)
-        radii_temp[j] = np.subtract(edges_idx[n, 0], edges_idx[n, 1])
+        mid_rel_pp_plots[n, j] = int((edges_idx[n, 0] + edges_idx[n, 1]) / 2)
+        print(n, j, "L:", edges_idx[n, 0], "R:", edges_idx[n, 1], "m:", mid_rel_pp_plots[n, j])
+        dia_temp[j] = np.subtract(edges_idx[n, 1], edges_idx[n, 0])
 
     # filter
-    # if value deviates too much from avg, set it to zero
-    avg = np.sum(centerpoints_rel[n, :]) / np.count_nonzero(centerpoints_rel[n, :])
-    for j in range(7):
-        delta_centerpoints[j] = abs((centerpoints_rel[n, j]/avg) * 100 - 100)
+    # if radius_temp is bigger than radius from previous droplet: delete it, its wrong
+    print("r_old:", radius_old)
+    if radius_old[n] != 0:
+        for idx in range(len(dia_temp)):
+            if dia_temp[idx] > int(radius_old[n] * 2.2):
+                dia_temp[idx] = 0
+                mid_rel_pp_plots[n, idx] = 0
+                delta_midpoints[idx] = 0
+                print("r_deleted:", idx, dia_temp[idx])
 
-    while np.max(delta_centerpoints) > 15:
-        for idx, val in enumerate(delta_centerpoints):
-            if val == np.max(delta_centerpoints):
-                centerpoints_rel[n, idx] = 0
-                delta_centerpoints[idx] = 0
+            if dia_temp[idx] < int(radius_old[n] * 1.7):
+                dia_temp[idx] = 0
+                mid_rel_pp_plots[n, idx] = 0
+                delta_midpoints[idx] = 0
+                print("r_deleted:", idx, dia_temp[idx])
+
+    #print("0) result after first filters")
+    #print(mid_rel_pp_plots)
+    # if value deviates too much from avg, set it to zero
+    avg = np.sum(mid_rel_pp_plots[n, :]) / np.count_nonzero(mid_rel_pp_plots[n, :])
+    for j in range(7):
+        if mid_rel_pp_plots[n, j] != 0:
+            delta_midpoints[j] = abs((mid_rel_pp_plots[n, j]/avg) * 100 - 100)
+
+    while np.max(delta_midpoints) > 10:
+        print("average in while loop:", avg, " - np.max:", np.max(delta_midpoints))
+        for idx, val in enumerate(delta_midpoints):
+            if val == np.max(delta_midpoints):
+                print("delets idx:" , idx)
+                mid_rel_pp_plots[n, idx] = 0
+                delta_midpoints[idx] = 0
+                dia_temp[idx] = 0
                 break
 
-        avg = np.sum(centerpoints_rel[n, :]) / np.count_nonzero(centerpoints_rel[n, :])
+        avg = np.sum(mid_rel_pp_plots[n, :]) / np.count_nonzero(mid_rel_pp_plots[n, :])
         for j in range(7):
-            if delta_centerpoints[j] != 0:
-                delta_centerpoints[j] = abs((centerpoints_rel[n, j] / avg) * 100 - 100)
+            if delta_midpoints[j] != 0:
+                delta_midpoints[j] = abs((mid_rel_pp_plots[n, j] / avg) * 100 - 100)
 
-    print(centerpoints_rel)
+    print("result after both filters")
+    print("midpoints",mid_rel_pp_plots[n, :])
+    print("dias", dia_temp)
+
 
     # calculate centerpoint
-    centerpoint_rel = int(np.sum(centerpoints_rel[n, :])/np.count_nonzero(centerpoints_rel[n, :]))
-
-    # choose which start value is needed
+    # sometimes, all arrays equal zero due to llps happening bot got not detected (too much dirt)
+    # if so, use old values
     if n == 0:
         start_value = start_x
     else:
         start_value = start_y
 
-    centerpoint_abs = centerpoint_rel + start_value
-    centerpoints[0, n] = centerpoint_rel
+    if np.any(mid_rel_pp_plots) != 0:
+        centerpoint_rel = int(np.sum(mid_rel_pp_plots[n, :])/np.count_nonzero(mid_rel_pp_plots[n, :]))
+        print("mid calc: ", centerpoint_rel)
 
-    radius = np.max(radii_temp)
-    droplet_found = True
+        centerpoint_abs = centerpoint_rel + start_value
+        centerpoints[0, n] = centerpoint_rel
 
-    return centerpoint_abs, centerpoints, radius, droplet_found
+        diameter = int(np.sum(dia_temp) / np.count_nonzero(dia_temp))
+        droplet_found = True
+    else:
+        print("I USED THE OLD VALUES!")
+        diameter = int(radius_old[n] * 2 * 0.8)
+        droplet_found = True
+        centerpoint_abs = int(centerpoints[1, n] + start_value)
+
+    return centerpoint_abs, centerpoints, diameter, droplet_found
 
 
 # Contour detection
@@ -612,7 +618,7 @@ def __squircle_iterator(cX_droplet, cY_droplet):
 
 # store selected pixels (more importantly their values) in new array
 def squircle_iteration(img, x0, y0, radius):
-    radius *= 0.9
+    radius *= 0.99
     z = np.zeros(shape=(len(img[:, 0]), len(img[0, :])))
     for (idx1, idx2) in __squircle_iterator(x0, y0):
         if (idx1 - x0) ** 2 + (idx2 - y0) ** 2 < radius ** 2:
@@ -624,14 +630,17 @@ def squircle_iteration(img, x0, y0, radius):
 
 # LLPS detector
 def LLPS_detection(mean_of_current_image, percental_threshold, area_droplet, areas, mean_list):
-    if len(mean_list) >= 1:
+    if len(mean_list) > 1:
         avg_mean_all_previous_images = np.mean(mean_list)
     else:
         avg_mean_all_previous_images = mean_of_current_image
-    # print("current",mean_of_current_image)
-    # print("avg",avg_mean_all_previous_images)
+
+    #print("current",mean_of_current_image)
+    #print("avg",avg_mean_all_previous_images)
+
     # Calculate percental difference between current mean value and average mean of all previous images
-    percental_difference = (mean_of_current_image / avg_mean_all_previous_images) * 100 - 100
+    percental_difference = abs((mean_of_current_image / avg_mean_all_previous_images) * 100 - 100)
+    print("perc. diff.: ", percental_difference)
 
     if percental_difference > percental_threshold:
         llps_status = True

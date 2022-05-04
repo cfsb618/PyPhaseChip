@@ -102,7 +102,7 @@ def images_to_dict(h, iph, n_concentrations, n_wells, image_list, image_names, b
 
 # Detect the wells and the droplets within them
 # create mask when necessary
-def droplet_detection(diameter, imgage, saved_points, elon_mask, centerpoints):
+def droplet_detection(diameter, imgage, saved_points, elon_mask, centerpoints, llps_status, r_old):
 
     print("detect wells & droplets and create masks")
     time.sleep(0.5)
@@ -112,7 +112,7 @@ def droplet_detection(diameter, imgage, saved_points, elon_mask, centerpoints):
     # find well and prepare for droplet detection
     x, y, r, saved_points, well_found = fun.find_well_algo(imgage, saved_points, diameter, dev=10)
 
-    if well_found is True:
+    if well_found is True and llps_status is False:
         mask, saved_points = fun.create_mask(imgage.copy(), elon_mask, saved_points, x, y, r, dev=2)
         masked_img = fun.mask_image(imgage.copy(), mask)
 
@@ -135,26 +135,23 @@ def droplet_detection(diameter, imgage, saved_points, elon_mask, centerpoints):
             droplet_var_h[key] = {}
             droplet_var_v[key] = {}
 
-        #for idx, val in enumerate(horizontal):
-        #    droplet_var_h['normalised'][idx] = np.array(val) / np.mean(np.array(val))
-
-        #for idx, val in enumerate(vertical):
-        #    droplet_var_v['normalised'][idx] = np.array(val) / np.mean(np.array(val))
-
-        norm_pp_len_h = fun.normalise_profile_plot_length(horizontal)
-        x_abs, centerpoints, delta_x, droplet_found_x = fun.compute_droplet_from_peaks(x, y, r, f, norm_pp_len_h, centerpoints, n=0)
-        norm_pp_len_v = fun.normalise_profile_plot_length(vertical)
-        y_abs, centerpoints, delta_y, droplet_found_y = fun.compute_droplet_from_peaks(x, y, r, f, norm_pp_len_v, centerpoints, n=1)
+        norm_pp_len_h = fun.normalise_profile_plot_length(horizontal, centerpoints, 0)
+        x_abs, centerpoints, diameter_x, droplet_found_x = fun.compute_droplet_from_peaks(x, y, r, f, norm_pp_len_h, centerpoints, 0, r_old)
+        norm_pp_len_v = fun.normalise_profile_plot_length(vertical, centerpoints, 1)
+        y_abs, centerpoints, diameter_y, droplet_found_y = fun.compute_droplet_from_peaks(x, y, r, f, norm_pp_len_v, centerpoints, 1, r_old)
 
         if droplet_found_y is True and droplet_found_x is True:
-            if delta_y < delta_x:
-                radius_est = int((delta_y / 2) * 0.99)
+            if diameter_y < diameter_x:
+                radius_est = int((diameter_y / 2) * 0.99)
             else:
-                radius_est = int((delta_x / 2) * 0.99)
+                radius_est = int((diameter_x / 2) * 0.99)
             droplet_found = True
         else:
             droplet_found = False
             radius_est = 0
+        print("radius est:", radius_est)
+        r_old[0] = int(diameter_x/2)
+        r_old[1] = int(diameter_y/2)
 
     else:
         x_abs = 0
@@ -174,90 +171,120 @@ def droplet_detection(diameter, imgage, saved_points, elon_mask, centerpoints):
         E = 0
         S = 0
 
+
     print("- droplet found:", droplet_found)
 
-    return x_abs, y_abs, centerpoints, radius_est, saved_points, mask, masked_img, droplet_found, l, l_vert, norm_pp_len_h, norm_pp_len_v, img, f, N, E, S, W, x, y, r, horizontal
+    return x_abs, y_abs, centerpoints, radius_est, saved_points, mask, masked_img, droplet_found, l, l_vert, norm_pp_len_h, norm_pp_len_v, img, f, N, E, S, W, x, y, r, r_old
 
 
 # Detect LLPS
 # loop over ALL the images
-def detect_LLPS(percental_threshold, x_abs, y_abs, radius_est, llps_status, masked_img, t, threshed_img_prev, areas,
+def detect_LLPS(percental_threshold, x_abs, y_abs, radius_est, droplet_arr, llps_status, manip_img, t, areas,
                 mean_list, droplet_found):
     print("LLPS detection")
     time.sleep(0.5)
 
+    droplet_arr[0, 0] = radius_est
+    droplet_arr[0, 1] = x_abs
+    droplet_arr[0, 2] = y_abs
+
     if droplet_found is True and llps_status is False:
 
+        # fallback if LLPS makes good droplet recognition impossible
+        if droplet_arr[1, 0] != 0 and abs(droplet_arr[0, 0]/droplet_arr[1, 0] * 100 - 100) > 15:
+            radius_est = int(droplet_arr[1, 0] * 0.9)
+            x_abs = int(droplet_arr[1, 1])
+            y_abs = int(droplet_arr[1, 2])
+            print("Fallback:", x_abs, y_abs)
+        else:
+            droplet_arr[1, 0] = radius_est
+            droplet_arr[1, 1] = x_abs
+            droplet_arr[1, 2] = y_abs
+
+
         # calculate minimal distance from droplet center to edge
-        minimal_distance = radius_est * 0.8  # 80% of droplet radius
+        minimal_distance = radius_est * 0.9  # 90% of droplet radius
         area_droplet = 3.14159 * radius_est**2
-
-        #bigdict[time_idx][conc_nr][well_nr]['minimal distance'] = fun.minDistance(
-        #    contour_droplet, cX_droplet, cY_droplet)
-
-        # adjust contrast
-        #contrasted_current = cv2.convertScaleAbs(
-        #    bigdict[time_idx][conc_nr][well_nr]['masked image'], beta=-40)
-        #contrasted_old = cv2.convertScaleAbs(
-        #    bigdict[(time_idx - 1)][conc_nr][well_nr]['masked image'], beta=-40)
 
         # determine threshold value
         thresh_val = 215
 
-        blurred_cur = cv2.blur(masked_img.copy(), (4, 4))
-        ret, threshed_img_cur = cv2.threshold(blurred_cur, thresh_val, 255, cv2.THRESH_BINARY_INV)
+        #blurred_cur = cv2.blur(masked_img.copy(), (4, 4))
+        #ret, threshed_img_cur = cv2.threshold(blurred_cur, thresh_val, 255, cv2.THRESH_BINARY_INV)
 
-        if t > 1:
-
-            # subtract current img from old
-            subtracted_img = cv2.subtract(threshed_img_cur, threshed_img_prev)
-
-            # calculate pixel values within squircle inside droplet
-            # TODO: changed subtracted to thresh, see above
-            squircled_pixels = fun.squircle_iteration(subtracted_img, x_abs, y_abs, int(minimal_distance))
-
+        # save pixel values within squircle inside droplet
+        #squircled_pixels = fun.squircle_iteration(subtracted_img, int(x_abs), int(y_abs), int(minimal_distance))
+        if t > 0:
+            squircled_pixels = fun.squircle_iteration(manip_img, x_abs, y_abs, int(minimal_distance))
             # calculate mean of pixel values
-            mean = (np.sum(squircled_pixels) / np.count_nonzero(squircled_pixels))
-            print(t, "sum:", sum, "mean:", mean)
+            #mean = (np.sum(squircled_pixels) / np.count_nonzero(squircled_pixels))
 
+            # First detetion method
+            # counts zeros in squircle, feed "n" into detector
+            # set threshold to 40% or so
+            d = int(0.61 * radius_est)
+            cropped_squircled_pixels = squircled_pixels[y_abs - d:y_abs + d, x_abs - d:x_abs + d]
+            n = 0
+            for idx, value in enumerate(cropped_squircled_pixels):
+                for i, val in enumerate(cropped_squircled_pixels[idx]):
+                    if val == 0:
+                        n += 1
+            # print("count zeros", n)
+            # Second method
+            # set threshold to 30%
+            x, y = squircled_pixels.shape
+            count_total = (x * y)
+            mean = (np.sum(squircled_pixels)) / count_total
+            #print("x:", x_abs, "y: ", y_abs, "r: ", radius_est, "min_dis.: ", minimal_distance, "0_count: ", n)
             # Detector
-            llps_status, areas, mean_list = fun.LLPS_detection(mean, percental_threshold, area_droplet, areas, mean_list)
+            llps_status, areas, mean_list = fun.LLPS_detection(n, percental_threshold, area_droplet, areas,
+                                                               mean_list)
 
-        threshed_img_prev = threshed_img_cur
+        else:
+            squircled_pixels = 0
 
-    return llps_status, threshed_img_prev, areas, mean_list
+        # blurred_img_prev = blurred_cur
+    else:
+        squircled_pixels = 0
+
+    return llps_status, areas, mean_list, droplet_arr, squircled_pixels
 
 
-def ccrit_calculation(initc_sol1, initc_sol2, init_ratio, h, iph, n_concentrations, n_wells, bigdict):
-    well_nr = 0
-    # calculate starting concentrations
-    starting_concentrations = fun.starting_concentration(initc_sol1, initc_sol2, init_ratio)
+# calculate starting concentrations
+def starting_concentration(initial_conc_solution1, initial_conc_solution2, initial_ratio):
+    starting_conc = np.zeros(shape=(5, 2))
+    # [:,0] = solution 1, [:,1] = solution 2
+
+    # conc. in lane 1 (outer left)
+    starting_conc[0, 0] = initial_conc_solution1 / initial_ratio * (initial_ratio - 1)
+    starting_conc[0, 1] = initial_conc_solution2 / initial_ratio * 1
+    # conc. in lane 5 (outer right)
+    starting_conc[4, 0] = initial_conc_solution1 / initial_ratio * 1
+    starting_conc[4, 1] = initial_conc_solution2 / initial_ratio * (initial_ratio - 1)
+    # conc. in lane 3 (middle)
+    starting_conc[2, 0] = (starting_conc[0, 0] + starting_conc[4, 0]) / 2
+    starting_conc[2, 1] = (starting_conc[0, 1] + starting_conc[4, 1]) / 2
+    # conc. in lane 2
+    starting_conc[1, 0] = (starting_conc[0, 0] + starting_conc[2, 0]) / 2
+    starting_conc[1, 1] = (starting_conc[0, 1] + starting_conc[2, 1]) / 2
+    # conc. in lane 4
+    starting_conc[3, 0] = (starting_conc[2, 0] + starting_conc[4, 0]) / 2
+    starting_conc[3, 1] = (starting_conc[2, 1] + starting_conc[4, 1]) / 2
+
+    return starting_conc
+
+
+def ccrit_calculation(c_start, areas, conc_nr):
 
     # calculate c_crit
-    print("calculation of the critical concentration")
-    time.sleep(0.5)
-    for time_idx in tqdm(range(int((h * iph) + 1))):
-        for conc_nr in range (n_concentrations):
-            for n_rows_per_conc in range(2):
-                for n_wells_per_row in range(n_wells):
-                    if bigdict[0][conc_nr][well_nr]['well status'] is True and \
-                            bigdict[0][conc_nr][well_nr]['LLPS status'] is True:
-                        bigdict[0][conc_nr][well_nr]['LLPS conc'] = np.zeros(shape=(1, 2))
-                        # c_crit = area_start/area_end*c_start
-                        bigdict[0][conc_nr][well_nr]['LLPS conc'][0, 0] = (
-                                bigdict[0][conc_nr][well_nr]['areas'][0, 0] /
-                                bigdict[0][conc_nr][well_nr]['areas'][0, 1] * starting_concentrations[
-                                    conc_nr, 0])
-                        bigdict[0][conc_nr][well_nr]['LLPS conc'][0, 1] = (
-                                bigdict[0][conc_nr][well_nr]['areas'][0, 0] /
-                                bigdict[0][conc_nr][well_nr]['areas'][0, 1] * starting_concentrations[
-                                    conc_nr, 1])
+    # c_crit = area_start/area_end*c_start
 
-                    well_nr += 1
-            well_nr = 0
-        well_nr = 0
+    llps_conc = np.zeros(shape=(1, 2))
 
-    return starting_concentrations
+    llps_conc[0, 0] = areas[0, 0]/areas[0, 1] * c_start[conc_nr, 0]
+    llps_conc[0, 1] = areas[0, 0]/areas[0, 1] * c_start[conc_nr, 1]
+
+    return llps_conc
 
 
 def quality_control(bigdict, time_idx, conc_nr, well_nr, name_sol1, name_sol2, unit_sol1, unit_sol2,
