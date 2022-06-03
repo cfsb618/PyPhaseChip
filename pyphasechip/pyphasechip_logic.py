@@ -102,23 +102,21 @@ def images_to_dict(h, iph, n_concentrations, n_wells, image_list, image_names, b
 
 # Detect the wells and the droplets within them
 # create mask when necessary
-def droplet_detection(diameter, imgage, saved_points, elon_mask, centerpoints, llps_status, r_old):
+def droplet_detection(diameter, imgage, well_data, elon_mask, centerpoints_rel, llps_status, droplet_arr, r_0, time_idx, areas, r_old_hv):
+
+    r_old = r_old_hv
 
     print("detect wells & droplets and create masks")
     time.sleep(0.5)
 
-    ## image manipulation
-
     # find well and prepare for droplet detection
-    x, y, r, saved_points, well_found = fun.find_well_algo(imgage, saved_points, diameter, dev=10)
+    x, y, r, well_data, well_found = fun.find_well_algo(imgage, well_data, diameter, dev=10)
 
     if well_found is True and llps_status is False:
-        mask, saved_points = fun.create_mask(imgage.copy(), elon_mask, saved_points, x, y, r, dev=2)
+        mask, well_data = fun.create_mask(imgage.copy(), elon_mask, well_data, x, y, r, dev=2)
         masked_img = fun.mask_image(imgage.copy(), mask)
 
         img = fun.image_manipulation(masked_img, x, y, r)
-
-        ## detect droplet
 
         f, N, E, S, W = fun.calculate_profile_plot_coordinates(x, y, r)
         l, l_vert, length_arr, horizontal, vertical = fun.set_profile_plots(img, N, E, S, W, x, y, r)
@@ -135,28 +133,57 @@ def droplet_detection(diameter, imgage, saved_points, elon_mask, centerpoints, l
             droplet_var_h[key] = {}
             droplet_var_v[key] = {}
 
-        norm_pp_len_h = fun.normalise_profile_plot_length(horizontal, centerpoints, 0)
-        x_abs, centerpoints, diameter_x, droplet_found_x = fun.compute_droplet_from_peaks(x, y, r, f, norm_pp_len_h, centerpoints, 0, r_old)
-        norm_pp_len_v = fun.normalise_profile_plot_length(vertical, centerpoints, 1)
-        y_abs, centerpoints, diameter_y, droplet_found_y = fun.compute_droplet_from_peaks(x, y, r, f, norm_pp_len_v, centerpoints, 1, r_old)
+        # norm_pp_len_h = fun.normalise_profile_plot_length(horizontal, centerpoints_rel, 0)
+        norm_pp_len_h = horizontal
+        x_abs, centerpoints_rel, diameter_x, droplet_found_x = fun.compute_droplet_from_peaks(x, y, r, f, horizontal,
+                                                                                              centerpoints_rel, 0, r_old)
+        # norm_pp_len_v = fun.normalise_profile_plot_length(vertical, centerpoints_rel, 1)
+        norm_pp_len_v = vertical
+        y_abs, centerpoints_rel, diameter_y, droplet_found_y = fun.compute_droplet_from_peaks(x, y, r, f, vertical,
+                                                                                              centerpoints_rel, 1, r_old)
 
         if droplet_found_y is True and droplet_found_x is True:
             if diameter_y < diameter_x:
-                radius_est = int((diameter_y / 2) * 0.99)
+                radius_droplet = int((diameter_y / 2) * 0.99)
             else:
-                radius_est = int((diameter_x / 2) * 0.99)
+                radius_droplet = int((diameter_x / 2) * 0.99)
             droplet_found = True
         else:
             droplet_found = False
-            radius_est = 0
-        print("radius est:", radius_est)
+            radius_droplet = 0
+
+        print("radius est:", radius_droplet)
+        # update r_old
         r_old[0] = int(diameter_x/2)
         r_old[1] = int(diameter_y/2)
+
+        # array with absolute droplet values; 0 = current, 1 = previous
+        droplet_arr[0, 0] = radius_droplet
+        droplet_arr[0, 1] = x_abs
+        droplet_arr[0, 2] = y_abs
+
+        # calculate droplet values based on linear extrapolation
+        if time_idx == 0:
+            r_0 = radius_droplet
+
+        if time_idx >= 2:
+            a_0 = 3.14 * r_0**2
+            a_prev = 3.14 * droplet_arr[1, 0]**2
+            t = time_idx - 1
+            m = (a_prev - a_0)/(t - 0)
+            b = a_0
+            a_cur = m * time_idx + b
+            droplet_arr[0, 3] = a_cur
+            print("t:", t, ", m:", m, ", b:", b, ", a_cur:", a_cur)
+            print("a_0:", a_0, ", r_0:", r_0, ", a_prev:", a_prev, ", r_prev:", droplet_arr[1, 0])
+        else:
+            a_calc = 3.14 * radius_droplet**2
+            droplet_arr[0, 3] = a_calc
 
     else:
         x_abs = 0
         y_abs = 0
-        radius_est = 0
+        radius_droplet = 0
         mask = 0
         masked_img = 0
         droplet_found = False
@@ -170,84 +197,82 @@ def droplet_detection(diameter, imgage, saved_points, elon_mask, centerpoints, l
         W = 0
         E = 0
         S = 0
-
+        horizontal = 0
+        vertical = 0
 
     print("- droplet found:", droplet_found)
 
-    return x_abs, y_abs, centerpoints, radius_est, saved_points, mask, masked_img, droplet_found, l, l_vert, norm_pp_len_h, norm_pp_len_v, img, f, N, E, S, W, x, y, r, r_old
+    return x_abs, y_abs, centerpoints_rel, well_data, mask, masked_img, droplet_found, l, l_vert, norm_pp_len_h, norm_pp_len_v, img, f, N, E, S, W, x, y, droplet_arr, areas, r_old_hv, horizontal, vertical, r_0
 
 
 # Detect LLPS
 # loop over ALL the images
-def detect_LLPS(percental_threshold, x_abs, y_abs, radius_est, droplet_arr, llps_status, manip_img, t, areas,
-                mean_list, droplet_found):
+def detect_LLPS(percental_threshold, droplet_arr, llps_status, manip_img, t, areas,
+                mean_list, droplet_found, n_0):
     print("LLPS detection")
     time.sleep(0.5)
-
-    droplet_arr[0, 0] = radius_est
-    droplet_arr[0, 1] = x_abs
-    droplet_arr[0, 2] = y_abs
+    radius_droplet = droplet_arr[0, 0]
+    x = int(droplet_arr[0, 1])
+    y = int(droplet_arr[0, 2])
 
     if droplet_found is True and llps_status is False:
 
         # fallback if LLPS makes good droplet recognition impossible
         if droplet_arr[1, 0] != 0 and abs(droplet_arr[0, 0]/droplet_arr[1, 0] * 100 - 100) > 15:
-            radius_est = int(droplet_arr[1, 0] * 0.9)
-            x_abs = int(droplet_arr[1, 1])
-            y_abs = int(droplet_arr[1, 2])
-            print("Fallback:", x_abs, y_abs)
+            x = int(droplet_arr[1, 1])
+            y = int(droplet_arr[1, 2])
+            print("Fallback:", x, y)
+            r_extrapolated = int(droplet_arr[1, 0] * 0.9)
         else:
-            droplet_arr[1, 0] = radius_est
-            droplet_arr[1, 1] = x_abs
-            droplet_arr[1, 2] = y_abs
-
+            r_extrapolated = int(np.sqrt(droplet_arr[0, 3]/3.14))
 
         # calculate minimal distance from droplet center to edge
-        minimal_distance = radius_est * 0.9  # 90% of droplet radius
-        area_droplet = 3.14159 * radius_est**2
-
-        # determine threshold value
-        thresh_val = 215
-
-        #blurred_cur = cv2.blur(masked_img.copy(), (4, 4))
-        #ret, threshed_img_cur = cv2.threshold(blurred_cur, thresh_val, 255, cv2.THRESH_BINARY_INV)
+        minimal_distance = int(r_extrapolated * 0.9)  # 90% of droplet radius
+        #area_droplet = 3.14159 * radius_droplet**2
 
         # save pixel values within squircle inside droplet
-        #squircled_pixels = fun.squircle_iteration(subtracted_img, int(x_abs), int(y_abs), int(minimal_distance))
-        if t > 0:
-            squircled_pixels = fun.squircle_iteration(manip_img, x_abs, y_abs, int(minimal_distance))
-            # calculate mean of pixel values
-            #mean = (np.sum(squircled_pixels) / np.count_nonzero(squircled_pixels))
+        # squircled_pixels = fun.squircle_iteration(subtracted_img, int(x_abs), int(y_abs), int(minimal_distance))
+        squircled_pixels = fun.squircle_iteration(manip_img, x, y, minimal_distance)
 
-            # First detetion method
-            # counts zeros in squircle, feed "n" into detector
-            # set threshold to 40% or so
-            d = int(0.61 * radius_est)
-            cropped_squircled_pixels = squircled_pixels[y_abs - d:y_abs + d, x_abs - d:x_abs + d]
-            n = 0
-            for idx, value in enumerate(cropped_squircled_pixels):
-                for i, val in enumerate(cropped_squircled_pixels[idx]):
-                    if val == 0:
-                        n += 1
-            # print("count zeros", n)
-            # Second method
-            # set threshold to 30%
-            x, y = squircled_pixels.shape
-            count_total = (x * y)
-            mean = (np.sum(squircled_pixels)) / count_total
-            #print("x:", x_abs, "y: ", y_abs, "r: ", radius_est, "min_dis.: ", minimal_distance, "0_count: ", n)
+        # First detection method
+        # counts zeros in squircle, feed "n" into detector
+        # set threshold to 40% or so
+        d = int(0.61 * r_extrapolated)
+        cropped_squircled_pixels = squircled_pixels[y - d:y + d, x - d:x + d]
+        n = 0
+        for idx, value in enumerate(cropped_squircled_pixels):
+            for i, val in enumerate(cropped_squircled_pixels[idx]):
+                if val == 0:
+                    n += 1
+        # print("count zeros", n)
+        # Second method
+        # set threshold to 30%
+        #x_squircle, y_squircle = squircled_pixels.shape
+        #count_total = (x_squircle * y_squircle)
+        #mean = (np.sum(squircled_pixels)) / count_total
+        #print("x:", x_abs, "y: ", y_abs, "r: ", radius_droplet, "min_dis.: ", minimal_distance, "0_count: ", n)
+
+        if t == 0:
+            n_0 = n
+
+        if t > 0:
             # Detector
-            llps_status, areas, mean_list = fun.LLPS_detection(n, percental_threshold, area_droplet, areas,
+            llps_status, areas, mean_list = fun.LLPS_detection(n, percental_threshold, areas, droplet_arr,
                                                                mean_list)
 
-        else:
-            squircled_pixels = 0
+        # computation is done; transfer current droplet data to previous one
+        droplet_arr[1, 0] = droplet_arr[0, 0]
+        droplet_arr[1, 1] = droplet_arr[0, 1]
+        droplet_arr[1, 2] = droplet_arr[0, 2]
+        droplet_arr[1, 3] = droplet_arr[0, 3]
+        print(droplet_arr)
 
         # blurred_img_prev = blurred_cur
     else:
         squircled_pixels = 0
+        cropped_squircled_pixels = 0
 
-    return llps_status, areas, mean_list, droplet_arr, squircled_pixels
+    return llps_status, areas, mean_list, droplet_arr, squircled_pixels, cropped_squircled_pixels,  n_0
 
 
 # calculate starting concentrations

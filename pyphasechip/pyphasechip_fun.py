@@ -97,7 +97,7 @@ def find_well(img: np.ndarray, diameter: int, n: float, m: float):
 
 
 # little algorithm to find the well reliably
-def find_well_algo(img: np.ndarray, saved_points: np.ndarray, diameter: int, dev: int):
+def find_well_algo(img: np.ndarray, well_data: np.ndarray, diameter: int, dev: int):
     n = 0.95
     m = 1.05
     a = 0
@@ -105,51 +105,49 @@ def find_well_algo(img: np.ndarray, saved_points: np.ndarray, diameter: int, dev
     # initial detection
     x, y, r = find_well(img, diameter, n, m)
 
-    saved_points[0, 0] = x
-    saved_points[0, 1] = y
-    saved_points[0, 2] = r
-
     # tries to makes shure that a well is detected
-    while saved_points[0, 0] == 0 and a < 5:
+    while x == 0 and a < 5:
         n -= 0.02
         m += 0.05
         a += 1
-        print("pos. first time counter", a)
+        print("well detection retry counter", a)
         x, y, r = find_well(img, diameter, n, m)
-        saved_points[0, 0] = x
-        saved_points[0, 1] = y
-        saved_points[0, 2] = r
+
 
     # checks if in last image a well was detected
     # if so, checks if the current position of the well deviates too much from the old one
-    if saved_points[1, 0] != 0:
-        a = 0
-        x_dif = abs(100 - x / saved_points[1, 0] * 100)
-        y_dif = abs(100 - y / saved_points[1, 1] * 100)
-        r_dif = abs(100 - r / saved_points[1, 2] * 100)
+    #if well_data[1, 0] != 0:
+    #    a = 0
+    #    x_dif = abs(100 - x / well_data[1, 0] * 100)
+    #    y_dif = abs(100 - y / well_data[1, 1] * 100)
+    #    r_dif = abs(100 - r / well_data[1, 2] * 100)#
 
-        while (x_dif > dev or y_dif > dev or r_dif > dev) and a < 5:
-            n -= 0.02
-            m += 0.05
-            a += 1
-            print("- pos. deviation counter", a)
-            x, y, r = find_well(img, diameter, n, m)
-            x_dif = abs(100 - x / saved_points[1, 0] * 100)
-            y_dif = abs(100 - y / saved_points[1, 1] * 100)
-            r_dif = abs(100 - r / saved_points[1, 2] * 100)
+    #    while (x_dif > dev or y_dif > dev or r_dif > dev) and a < 5:
+    #        n -= 0.02
+    #        m += 0.05
+     #       a += 1
+    #        print("- pos. deviation counter", a)
+    #        x, y, r = find_well(img, diameter, n, m)
+    #        x_dif = abs(100 - x / well_data[1, 0] * 100)
+    #        y_dif = abs(100 - y / well_data[1, 1] * 100)
+    #        r_dif = abs(100 - r / well_data[1, 2] * 100)
+
+    well_data[0, 0] = x
+    well_data[0, 1] = y
+    well_data[0, 2] = r
 
     # Account for the case where no well can be found
-    if a == 5 or saved_points[0, 0] == 0:
+    if a == 5 or well_data[0, 0] == 0:
         well_found = False
     else:
         well_found = True
     print("- well found:", well_found)
 
-    return x, y, r, saved_points, well_found
+    return x, y, r, well_data, well_found
 
 
 # create mask
-def create_mask(img, mask, saved_points, x, y, r, dev: int):
+def create_mask(img, mask, well_data, x, y, r, dev: int):
     # read information from circle detection
     x0 = x
     y0 = y
@@ -157,10 +155,10 @@ def create_mask(img, mask, saved_points, x, y, r, dev: int):
 
     # checks if well position in current img differs too much from
     # well position in previous img
-    if saved_points[1, 0] != 0:
-        x_dif = abs(100 - x / saved_points[1, 0] * 100)
-        y_dif = abs(100 - y / saved_points[1, 1] * 100)
-        r_dif = abs(100 - r / saved_points[1, 2] * 100)
+    if well_data[1, 0] != 0:
+        x_dif = abs(100 - x / well_data[1, 0] * 100)
+        y_dif = abs(100 - y / well_data[1, 1] * 100)
+        r_dif = abs(100 - r / well_data[1, 2] * 100)
 
         if x_dif > dev or y_dif > dev or r_dif > dev:
             elon_mask = np.zeros(shape=img.shape, dtype="uint8")
@@ -179,11 +177,11 @@ def create_mask(img, mask, saved_points, x, y, r, dev: int):
                 if (idx2 - x0) ** 2 + (idx1 - y0) ** 2 < radius ** 2:
                     elon_mask[idx1][idx2] = 255
 
-    saved_points[1, 0] = x
-    saved_points[1, 1] = y
-    saved_points[1, 2] = r
+    well_data[1, 0] = x
+    well_data[1, 1] = y
+    well_data[1, 2] = r
 
-    return elon_mask, saved_points
+    return elon_mask, well_data
 
 
 # masking image
@@ -242,7 +240,7 @@ def set_profile_plots(img, N, E, S, W, x, y, r):
     return length_hor, length_vert, length_array, horizontal, vertical
 
 
-def normalise_profile_plot_length(norm_peaks, centerpoints, m):
+def normalise_profile_plot_length(norm_peaks, centerpoints_rel, m):
     delta = np.zeros(7)
     delta_edges = 0
     cubic_norm_peaks = np.zeros(shape=(7, len(norm_peaks[3])))
@@ -279,8 +277,8 @@ def normalise_profile_plot_length(norm_peaks, centerpoints, m):
             for a in range(2):
                 add.append(np.max(temp))
 
-        if centerpoints[0, m] != 0:
-            mid = int(centerpoints[0, m])
+        if centerpoints_rel[0, m] != 0:
+            mid = int(centerpoints_rel[0, m])
         else:
             mid = int(len(temp) / 2)
         cubic_norm_peaks[n] = np.insert(temp, mid, add)
@@ -289,7 +287,7 @@ def normalise_profile_plot_length(norm_peaks, centerpoints, m):
     return cubic_norm_peaks
 
 
-def compute_droplet_from_peaks(x: int, y: int, r: int, f: float, pp_arrays: np.ndarray, centerpoints: np.ndarray,
+def compute_droplet_from_peaks(x: int, y: int, r: int, f: float, pp_arrays: np.ndarray, centerpoints_rel: np.ndarray,
                                n: int, radius_old: np.ndarray):
 
     # n can be 0 for horizontal or 1 for vertical
@@ -301,21 +299,21 @@ def compute_droplet_from_peaks(x: int, y: int, r: int, f: float, pp_arrays: np.n
     delta_midpoints = np.zeros(7)
 
     # accounts for a moving droplet center
-    if centerpoints[0, n] == 0:
+    if centerpoints_rel[0, n] == 0:
         mid = int(len(pp_arrays[3]) / 2)
     else:
-        centerpoints[1, n] = centerpoints[0, n]
-        mid = int(centerpoints[1, n])
+        centerpoints_rel[1, n] = centerpoints_rel[0, n]
+        mid = int(centerpoints_rel[1, n])
     print("mid_start:", mid)
 
     # "walk" right/left from center until value is equal 0, save idx, this is our edge
     for j in range(len(pp_arrays)):
-        for i in range(len(pp_arrays[j])-mid):
+        for i in range(1, len(pp_arrays[j])-mid):
             if pp_arrays[j][mid + i] == 0:
                 edges_idx[n, 1] = mid + i
                 break
 
-        for i in range(mid):
+        for i in range(1, mid):
             if pp_arrays[j][mid - i] == 0:
                 edges_idx[n, 0] = mid - i
                 break
@@ -330,20 +328,23 @@ def compute_droplet_from_peaks(x: int, y: int, r: int, f: float, pp_arrays: np.n
     if radius_old[n] != 0:
         for idx in range(len(dia_temp)):
             if dia_temp[idx] > int(radius_old[n] * 2.2):
+                print("diameter temp", dia_temp[idx], ">", "diameter old (big)", (radius_old[n] * 2.2))
+                print("r_deleted:", idx, dia_temp[idx])
                 dia_temp[idx] = 0
                 mid_rel_pp_plots[n, idx] = 0
                 delta_midpoints[idx] = 0
-                print("r_deleted:", idx, dia_temp[idx])
 
-            if dia_temp[idx] < int(radius_old[n] * 1.7):
+            if dia_temp[idx] < int(radius_old[n] * 1.7) and dia_temp[idx] != 0:
+                print("diameter temp", dia_temp[idx],  "<", "diameter old (small)", (radius_old[n] * 1.7))
+                print("r_deleted:", idx, dia_temp[idx])
                 dia_temp[idx] = 0
                 mid_rel_pp_plots[n, idx] = 0
                 delta_midpoints[idx] = 0
-                print("r_deleted:", idx, dia_temp[idx])
 
-    #print("0) result after first filters")
-    #print(mid_rel_pp_plots)
-    # if value deviates too much from avg, set it to zero
+    print("result after first filters")
+    print(mid_rel_pp_plots[n, :])
+
+    # if mid-value deviates too much from avg, set it to zero
     avg = np.sum(mid_rel_pp_plots[n, :]) / np.count_nonzero(mid_rel_pp_plots[n, :])
     for j in range(7):
         if mid_rel_pp_plots[n, j] != 0:
@@ -353,7 +354,7 @@ def compute_droplet_from_peaks(x: int, y: int, r: int, f: float, pp_arrays: np.n
         print("average in while loop:", avg, " - np.max:", np.max(delta_midpoints))
         for idx, val in enumerate(delta_midpoints):
             if val == np.max(delta_midpoints):
-                print("delets idx:" , idx)
+                print("delets idx:", idx)
                 mid_rel_pp_plots[n, idx] = 0
                 delta_midpoints[idx] = 0
                 dia_temp[idx] = 0
@@ -364,10 +365,9 @@ def compute_droplet_from_peaks(x: int, y: int, r: int, f: float, pp_arrays: np.n
             if delta_midpoints[j] != 0:
                 delta_midpoints[j] = abs((mid_rel_pp_plots[n, j] / avg) * 100 - 100)
 
-    print("result after both filters")
-    print("midpoints",mid_rel_pp_plots[n, :])
-    print("dias", dia_temp)
-
+    print("result after both filters:")
+    print("midpoints", mid_rel_pp_plots[n, :])
+    print("diameters", dia_temp)
 
     # calculate centerpoint
     # sometimes, all arrays equal zero due to llps happening bot got not detected (too much dirt)
@@ -379,20 +379,20 @@ def compute_droplet_from_peaks(x: int, y: int, r: int, f: float, pp_arrays: np.n
 
     if np.any(mid_rel_pp_plots) != 0:
         centerpoint_rel = int(np.sum(mid_rel_pp_plots[n, :])/np.count_nonzero(mid_rel_pp_plots[n, :]))
-        print("mid calc: ", centerpoint_rel)
+        print("result: mid_rel calc: ", centerpoint_rel)
 
         centerpoint_abs = centerpoint_rel + start_value
-        centerpoints[0, n] = centerpoint_rel
+        centerpoints_rel[0, n] = centerpoint_rel
 
         diameter = int(np.sum(dia_temp) / np.count_nonzero(dia_temp))
         droplet_found = True
     else:
-        print("I USED THE OLD VALUES!")
         diameter = int(radius_old[n] * 2 * 0.8)
         droplet_found = True
-        centerpoint_abs = int(centerpoints[1, n] + start_value)
+        centerpoint_abs = int(centerpoints_rel[1, n] + start_value)
+        print("Used centerpoint from prev. droplet:", centerpoint_abs)
 
-    return centerpoint_abs, centerpoints, diameter, droplet_found
+    return centerpoint_abs, centerpoints_rel, diameter, droplet_found
 
 
 # Contour detection
@@ -629,29 +629,28 @@ def squircle_iteration(img, x0, y0, radius):
 
 
 # LLPS detector
-def LLPS_detection(mean_of_current_image, percental_threshold, area_droplet, areas, mean_list):
+def LLPS_detection(mean_of_current_image, percental_threshold, areas, droplet_arr, mean_list):
+    mean_abs = mean_of_current_image
+
     if len(mean_list) > 1:
         avg_mean_all_previous_images = np.mean(mean_list)
     else:
-        avg_mean_all_previous_images = mean_of_current_image
-
-    #print("current",mean_of_current_image)
-    #print("avg",avg_mean_all_previous_images)
+        avg_mean_all_previous_images = mean_abs
 
     # Calculate percental difference between current mean value and average mean of all previous images
-    percental_difference = abs((mean_of_current_image / avg_mean_all_previous_images) * 100 - 100)
+    percental_difference = abs((mean_abs / avg_mean_all_previous_images) * 100 - 100)
     print("perc. diff.: ", percental_difference)
 
     if percental_difference > percental_threshold:
         llps_status = True
         # save area to array
-        areas[0, 1] = area_droplet
+        areas[0, 1] = droplet_arr[0, 3]
         # save last mean
-        mean_list.append(mean_of_current_image)
+        mean_list.append(mean_abs)
     else:
         llps_status = False
         # save mean to mean list
-        mean_list.append(mean_of_current_image)
+        mean_list.append(mean_abs)
 
     return llps_status, areas, mean_list
 
