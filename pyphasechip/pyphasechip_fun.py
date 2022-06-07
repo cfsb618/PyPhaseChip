@@ -240,6 +240,49 @@ def set_profile_plots(img, N, E, S, W, x, y, r):
     return length_hor, length_vert, length_array, horizontal, vertical
 
 
+def set_profile_plots2(img, N, E, S, W, x, y, r, d, j):
+    horizontal = []
+    vertical = []
+
+    value = coordinates_value_selector(j, r, x, y, 0)
+    horizontal.append(img[int(value + d), W:E])
+
+    value = coordinates_value_selector(j, r, x, y, 1)
+    vertical.append(img[N:S, int(value + d)])
+
+    return horizontal, vertical
+
+
+def profile_plot_filter(img, N, E, S, W, x, y, r):
+    # sum profile plots
+    adjacent = [-1, 0, 1]
+
+    hor_sum = []
+    vert_sum = []
+
+    liste = [0, 1, 2, 3, 4, 5, 6]
+    for j in liste:
+        hor_list = []
+        vert_list = []
+        for d in adjacent:
+            horizontal, vertical = set_profile_plots2(img, N, E, S, W, x, y, r, d, j)
+            hor_list.append(horizontal)
+            vert_list.append(vertical)
+
+        # print("hor", hor_list)
+        for part in zip(*hor_list):
+            hor_sum.append(sum(part))
+
+        for part in zip(*vert_list):
+            vert_sum.append(sum(part))
+    #
+    # not needed at implementing stage
+    length_hor = 0
+    length_vert = 0
+    length_array = 0
+    return hor_sum, vert_sum
+
+
 def normalise_profile_plot_length(norm_peaks, centerpoints_rel, m):
     delta = np.zeros(7)
     delta_edges = 0
@@ -288,7 +331,7 @@ def normalise_profile_plot_length(norm_peaks, centerpoints_rel, m):
 
 
 def compute_droplet_from_peaks(x: int, y: int, r: int, f: float, pp_arrays: np.ndarray, centerpoints_rel: np.ndarray,
-                               n: int, radius_old: np.ndarray):
+                               n: int, radius_old: np.ndarray, radius_droplet_old: int, avg_sum_prev: int):
 
     # n can be 0 for horizontal or 1 for vertical
     edges_idx = np.zeros(shape=(2, 2))
@@ -297,6 +340,7 @@ def compute_droplet_from_peaks(x: int, y: int, r: int, f: float, pp_arrays: np.n
     mid_rel_pp_plots = np.zeros(shape=(2, 7))
     dia_temp = np.zeros(7)
     delta_midpoints = np.zeros(7)
+    droplet_coordinates = np.zeros(shape=(7, 2, 2))  # [line_nr, edge 1/2, x/y values]
 
     # accounts for a moving droplet center
     if centerpoints_rel[0, n] == 0:
@@ -317,10 +361,30 @@ def compute_droplet_from_peaks(x: int, y: int, r: int, f: float, pp_arrays: np.n
             if pp_arrays[j][mid - i] == 0:
                 edges_idx[n, 0] = mid - i
                 break
+        
+        #droplet_coordinates = compute_coordinates(edges_idx, x, y, r, f, j, n, droplet_coordinates)  # FOR TESTING
 
         mid_rel_pp_plots[n, j] = int((edges_idx[n, 0] + edges_idx[n, 1]) / 2)
         print(n, j, "L:", edges_idx[n, 0], "R:", edges_idx[n, 1], "m:", mid_rel_pp_plots[n, j])
         dia_temp[j] = np.subtract(edges_idx[n, 1], edges_idx[n, 0])
+
+    # FOR TESTING
+    #circles = compute_circles(droplet_coordinates)
+    ##circles, avg_sum = filter_edges(circles, radius_droplet_old, avg_sum_prev)
+    # optimiser from dinesh:
+    #x_d, y_d = filter_coordinates(droplet_coordinates, 238, n, radius_droplet_old)
+    #x_droplet, y_droplet, r_droplet = optimise_circle(x_d, y_d)
+    #avg_sum = 0
+    #print("THIS IS DA OPTIMIZER:", x_opt, y_opt, r_opt)
+
+    #if np.any(circles) != 0:
+    #    x_droplet, y_droplet, r_droplet = calculate_droplet(circles)
+    #else:
+    #    # ToDo: change print statement to droplet_found
+    #    x_droplet = 0
+    #    y_droplet = 0
+    #    r_droplet = 0
+    #    print("test: droplet found: false")
 
     # filter
     # if radius_temp is bigger than radius from previous droplet: delete it, its wrong
@@ -392,7 +456,363 @@ def compute_droplet_from_peaks(x: int, y: int, r: int, f: float, pp_arrays: np.n
         centerpoint_abs = int(centerpoints_rel[1, n] + start_value)
         print("Used centerpoint from prev. droplet:", centerpoint_abs)
 
-    return centerpoint_abs, centerpoints_rel, diameter, droplet_found
+    return centerpoint_abs, centerpoints_rel, diameter, droplet_found, \
+           #x_droplet, y_droplet, r_droplet, avg_sum, droplet_coordinates
+
+
+def optimise_circle(x: np.ndarray, y: np.ndarray):  # -> tuple[float, float, float]
+    # coordinates of the barycenter
+    x_m = np.mean(x)
+    y_m = np.mean(y)
+
+    # calculation of the reduced coordinates
+    u = x - x_m
+    v = y - y_m
+
+    # linear system defining the center (uc, vc) in reduced coordinates:
+    #    Suu * uc +  Suv * vc = (Suuu + Suvv)/2
+    #    Suv * uc +  Svv * vc = (Suuv + Svvv)/2
+    Suv  = np.sum(u * v)
+    Suu  = np.sum(u**2)
+    Svv  = np.sum(v**2)
+    Suuv = np.sum(u**2 * v)
+    Suvv = np.sum(u * v**2)
+    Suuu = np.sum(u**3)
+    Svvv = np.sum(v**3)
+
+    # Solving the linear system
+    A = np.array([[Suu, Suv], [Suv, Svv]])
+    B = np.array([Suuu + Suvv, Svvv + Suuv]) / 2.0
+    uc, vc = np.linalg.solve(A, B)
+
+    xc_1 = x_m + uc
+    yc_1 = y_m + vc
+
+    Ri_1     = np.sqrt((x-xc_1)**2 + (y-yc_1)**2)
+    R_1      = np.mean(Ri_1)
+    residu_1 = np.sum((Ri_1-R_1)**2)
+    return xc_1, yc_1, R_1
+
+
+def filter_coordinates(droplet_coordinates: np.ndarray, threshold, n, r_prev):  # -> Tuple[np.ndarray, np.ndarray]:
+    x_d, y_d = np.hsplit(droplet_coordinates.reshape(14, 2), 2)
+    x_d, y_d = x_d.flatten(), y_d.flatten()
+
+    filtered_list_x, filtered_list_y = [], []
+
+    if n == 0:
+        m = x_d
+    else:
+        m = y_d
+
+    midpoints = []
+
+    for idx in range(0, len(m), 2):
+        temp = np.abs(m[idx] + m[idx + 1])
+        mid_point = temp / 2
+        midpoints.append(mid_point)
+    mean = sum(midpoints) / len(midpoints)
+    mean_midpoints = int(mean)
+
+    perc_delta_midpoints = []
+    for j in range(len(midpoints)):
+        if midpoints[j] != 0:
+            perc_delta_midpoints.append(abs((midpoints[j]/mean_midpoints) * 100 - 100))
+
+    while np.max(perc_delta_midpoints) > 10:
+        for idx, val in enumerate(perc_delta_midpoints):
+            if val == np.max(perc_delta_midpoints):
+                del(midpoints[idx])
+                del(perc_delta_midpoints[idx])
+                x_d = np.delete(x_d, (idx, idx + 1))
+                y_d = np.delete(y_d, (idx, idx + 1))
+                break
+
+        avg = np.sum(midpoints) / len(midpoints)
+        for j in range(len(perc_delta_midpoints)):
+            if perc_delta_midpoints[j] != 0:
+                perc_delta_midpoints[j] = abs((midpoints[j] / avg) * 100 - 100)
+
+    if r_prev != 0:
+        r_prev = r_prev
+    else:
+        r_prev = threshold / 2
+    # update m
+    if n == 0:
+        m = x_d
+    else:
+        m = y_d
+
+    print("len xd", len(x_d))
+    for idx in range(0, len(m), 2):
+        print("len", len(m))
+        print("idx", idx)
+        if (delta := np.abs(m[idx] - m[idx + 1])) <= threshold and np.abs((m[idx] - m[idx + 1]) / 2) < r_prev * 1.2:
+
+            #print(delta)
+
+            filtered_list_x.append(x_d[idx])
+            filtered_list_x.append(x_d[idx + 1])
+            filtered_list_y.append(y_d[idx])
+            filtered_list_y.append(y_d[idx + 1])
+
+    return filtered_list_x, filtered_list_y
+
+
+def avg_calculate_droplet(xh, xv, yh, yv, rh, rv, r_prev, avg_sumh, avg_sumv):
+    # calculates difference from previous position and radius
+    # takes value that is closer to previous pos/r
+
+    if rv != 0 and rh != 0:
+        if r_prev != 0:
+            delta_h = abs(np.subtract(rh, r_prev))
+            delta_v = abs(np.subtract(rv, r_prev))
+            if delta_h < delta_v:
+                r_droplet = rh
+            else:
+                r_droplet = rv
+        else:
+            r_droplet = np.min((rh, rv))
+        x_droplet = int((xh + xv) / 2)
+        y_droplet = int((yh + yv) / 2)
+        avg_sum = int((avg_sumh + avg_sumv) / 2)
+
+    elif rv != 0 and rh == 0:
+        r_droplet = rv
+        x_droplet = xv
+        y_droplet = yv
+        avg_sum = avg_sumv
+    else:
+        r_droplet = rh
+        x_droplet = xh
+        y_droplet = yh
+        avg_sum = avg_sumh
+
+    return x_droplet, y_droplet, r_droplet, avg_sum
+
+
+def calculate_droplet(circle_data: list):
+    # calculate droplet values from remaining entries in circle_data
+    x_values = []
+    y_values = []
+    r_values = []
+    for j in range(7):
+        if circle_data[j] != 0:
+            x_values.append(circle_data[j][0])
+            y_values.append(circle_data[j][1])
+            r_values.append(circle_data[j][2])
+    x_droplet = int(np.sum(x_values) / len(x_values))
+    y_droplet = int(np.sum(y_values) / len(y_values))
+    r_droplet = int(np.sum(r_values) / len(r_values))
+    
+    return x_droplet, y_droplet, r_droplet
+
+
+def filter_edges(circle_data: list, radius_old, avg_sum_prev: int):
+    # filter edge values derived from profile plots
+    # remove all values, that don't correspond to the droplet
+    # ToDO: adjust for case where circle_data is 0
+    print("HERE IS THE CIRCLE DATA")
+    print(circle_data)
+    # remove all values where radius is bigger than the previous radius
+    if radius_old != 0:
+        for j in range(7):
+            if circle_data[j][2] > radius_old * 1.1 or circle_data[j][2] < radius_old * 0.7:
+                circle_data[j] = 0
+    print("AFTER COMPARING TO PREVIOUS RADIUS", "r_prev:", radius_old)
+    print(circle_data)
+    # remove all values that are bigger or smaller than the average x/y center point
+    if np.any(circle_data) != 0:
+        avg_sum_centerpoint = calculate_avg_sum_xy(circle_data)
+        for j in range(7):
+            if circle_data[j] != 0 and avg_sum_prev == 0:
+                sum_centerpoint = circle_data[j][0] + circle_data[j][1]
+                if avg_sum_centerpoint * 1.2 < sum_centerpoint or avg_sum_centerpoint * 0.8 > sum_centerpoint:
+                    print("avg:", avg_sum_centerpoint, "uL:", (avg_sum_centerpoint * 1.1), "lL:", (avg_sum_centerpoint*0.9))
+                    circle_data[j] = 0
+            if circle_data[j] != 0 and avg_sum_prev != 0:
+                sum_centerpoint = circle_data[j][0] + circle_data[j][1]
+                if avg_sum_prev * 1.2 < sum_centerpoint or avg_sum_prev * 0.8 > sum_centerpoint:
+                    circle_data[j] = 0
+
+        print("AFTER FILTERING FOR CIRCLE CENTERPOINT", "avg_sum_prev:", avg_sum_prev)
+    print(circle_data)
+    # remove all values that are bigger or smaller than the average radius
+    if np.any(circle_data) != 0:
+        if radius_old == 0:
+            avg_radius = calculate_avg_radius(circle_data)
+        else:
+            avg_radius = int((calculate_avg_radius(circle_data) + radius_old * 0.95) / 2)
+        for j in range(7):
+            if np.count_nonzero(circle_data) > 2:  # if only two values, variance can be too high
+                if circle_data[j] != 0:
+                    if avg_radius * 1.15 < circle_data[j][2] or avg_radius * 0.85 > circle_data[j][2]:
+                        circle_data[j] = 0
+
+        print("AFTER FILTERING FOR RADII", "avg_r:", avg_radius)
+    print(circle_data)
+    # update avg sum
+    if np.any(circle_data) != 0:
+        avg_sum_centerpoint = calculate_avg_sum_xy(circle_data)
+    else:
+        avg_sum_centerpoint = 0
+
+    return circle_data, avg_sum_centerpoint
+
+
+def calculate_avg_radius(circle_data: list):
+    radius_list = []
+
+    for j in range(7):
+        if circle_data[j] != 0:
+            radius_list.append(circle_data[j][2])
+    avg_radius = int(np.sum(radius_list) / np.count_nonzero(radius_list))
+
+    return avg_radius
+
+
+def calculate_avg_sum_xy(circle_data: list):
+    sum_xy = []
+
+    for j in range(7):
+        if circle_data[j] != 0:
+            sum_xy.append(circle_data[j][0] + circle_data[j][1])
+    avg_sum_xy = int(np.sum(sum_xy) / np.count_nonzero(sum_xy))
+
+    return avg_sum_xy
+
+
+def compute_circles(droplet_coordinates: np.ndarray):
+    # select droplet coordinates and feed them into find_circles()
+    # take two points of the same line, and one from an adjacent one
+
+    # circle_data([x_coord, y_coord, r_value])
+    circle_data = []
+
+    for i in range(7):
+        if i < 6:
+            idx = i+1
+        else:
+            idx = i-1
+        x1 = droplet_coordinates[i, 0, 0]
+        y1 = droplet_coordinates[i, 0, 1]
+        x2 = droplet_coordinates[i, 1, 0]
+        y2 = droplet_coordinates[i, 1, 1]
+        x3 = droplet_coordinates[idx, 0, 0]
+        y3 = droplet_coordinates[idx, 0, 1]
+
+        x_circle, y_circle, r_circle = find_circle(x1, y1, x2, y2, x3, y3)
+        if x_circle != 0:
+            circle_data.append([x_circle, y_circle, r_circle])
+        else:
+            circle_data.append(0)
+
+    return circle_data
+
+
+def compute_coordinates(edges_idx: np.ndarray, x: int, y: int, r: int, f: float, line_number: int, n: int,
+                        droplet_coordinates: np.ndarray):
+    # compute absolute circle coordinates and store them in list
+    # used after each time edges_idexes get detected
+
+    # choose values to compute coordinates, then compute them
+    # horizontal:
+    if n == 0:
+        y_value = coordinates_value_selector(line_number, r, x, y, n)
+        start_x = int(x - r * f)  # x-values where the horizontal lines start
+
+        droplet_coordinates[line_number, 0, 0] = edges_idx[n, 0] + start_x
+        droplet_coordinates[line_number, 0, 1] = y_value
+        droplet_coordinates[line_number, 1, 0] = edges_idx[n, 1] + start_x
+        droplet_coordinates[line_number, 1, 1] = y_value
+        print(droplet_coordinates[line_number, 0, 0], droplet_coordinates[line_number, 0, 1], "//", droplet_coordinates[line_number, 1, 0], droplet_coordinates[line_number, 1, 1])
+
+    # vertical:
+    else:
+        x_value = coordinates_value_selector(line_number, r, x, y, n)
+        start_y = int(y - r * f)  # y-values where the vertical lines start
+
+        droplet_coordinates[line_number, 0, 0] = x_value
+        droplet_coordinates[line_number, 0, 1] = edges_idx[n, 0] + start_y
+        droplet_coordinates[line_number, 1, 0] = x_value
+        droplet_coordinates[line_number, 1, 1] = edges_idx[n, 1] + start_y
+
+    return droplet_coordinates
+
+
+def coordinates_value_selector(profile_plot_number: int, r: int, x: int, y: int, n: int):
+    if n == 0:
+        m = y
+    else:
+        m = x
+
+    if profile_plot_number == 0:
+        value = m - 1.5 * r / 2
+    elif profile_plot_number == 1:
+        value = m - 1.0 * r / 2
+    elif profile_plot_number == 2:
+        value = m - 0.5 * r / 2
+    elif profile_plot_number == 3:
+        value = m
+    elif profile_plot_number == 4:
+        value = m + 0.5 * r / 2
+    elif profile_plot_number == 5:
+        value = m + 1.0 * r / 2
+    else:
+        value = m + 1.5 * r / 2
+
+    return value
+
+
+def find_circle(x1, y1, x2, y2, x3, y3):
+    x12 = x1 - x2
+    x13 = x1 - x3
+
+    y12 = y1 - y2
+    y13 = y1 - y3
+
+    y31 = y3 - y1
+    y21 = y2 - y1
+
+    x31 = x3 - x1
+    x21 = x2 - x1
+
+    # x1^2 - x3^2
+    sx13 = pow(x1, 2) - pow(x3, 2)
+
+    # y1^2 - y3^2
+    sy13 = pow(y1, 2) - pow(y3, 2)
+
+    sx21 = pow(x2, 2) - pow(x1, 2)
+    sy21 = pow(y2, 2) - pow(y1, 2)
+
+    f = ((sx13 * x12 + sy13 * x12 + sx21 * x13 + sy21 * x13) // (2 * (y31 * x12 - y21 * x13)))
+
+    g = ((sx13 * y12 + sy13 * y12 + sx21 * y13 + sy21 * y13) // (2 * (x31 * y12 - x21 * y13)))
+
+    c = (-pow(x1, 2) - pow(y1, 2) - 2 * g * x1 - 2 * f * y1)
+
+    # eqn of circle be x^2 + y^2 + 2*g*x + 2*f*y + c = 0
+    # where centre is (h = -g, k = -f) and
+    # radius r as r^2 = h^2 + k^2 - c
+    # print("inf", np.isinf(f), np.isinf(g), "nan", np.isnan(f), np.isnan(g))
+    if np.isinf(f) == False and np.isinf(g) == False and np.isnan(f) == False and np.isnan(g) == False:
+        h = int(-g)
+        k = int(-f)
+        sqr_of_r = h * h + k * k - c
+        # r is the radius
+        r = int(round(np.sqrt(sqr_of_r), 5))
+    else:
+        h = 0
+        k = 0
+        r = 0
+
+    # print("Centre = (", h, ", ", k, ")")
+    # print("Radius = ", r)
+
+    # source: https://www.geeksforgeeks.org/equation-of-circle-when-three-points-on-the-circle-are-given/
+
+    return h, k, r
 
 
 # Contour detection

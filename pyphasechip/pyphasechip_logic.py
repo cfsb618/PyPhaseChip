@@ -102,7 +102,7 @@ def images_to_dict(h, iph, n_concentrations, n_wells, image_list, image_names, b
 
 # Detect the wells and the droplets within them
 # create mask when necessary
-def droplet_detection(diameter, imgage, well_data, elon_mask, centerpoints_rel, llps_status, droplet_arr, r_0, time_idx, areas, r_old_hv):
+def droplet_detection(diameter, imgage, well_data, elon_mask, centerpoints_rel, llps_status, droplet_arr, r_0, time_idx, areas, r_old_hv, r_droplet_old, avg_sum_prev):
 
     r_old = r_old_hv
 
@@ -119,7 +119,10 @@ def droplet_detection(diameter, imgage, well_data, elon_mask, centerpoints_rel, 
         img = fun.image_manipulation(masked_img, x, y, r)
 
         f, N, E, S, W = fun.calculate_profile_plot_coordinates(x, y, r)
-        l, l_vert, length_arr, horizontal, vertical = fun.set_profile_plots(img, N, E, S, W, x, y, r)
+        imgg = cv2.dilate(img.copy(), (5, 5), iterations=1)  # JUST A TEST
+        l, l_vert, length_arr, _, _ = fun.set_profile_plots(imgg, N, E, S, W, x, y, r)
+        horizontal, vertical = fun.profile_plot_filter(imgg, N, E, S, W, x, y, r)
+
 
         # creating dictionary
         # (its a dict for historical reasons, could also be an array)
@@ -133,14 +136,19 @@ def droplet_detection(diameter, imgage, well_data, elon_mask, centerpoints_rel, 
             droplet_var_h[key] = {}
             droplet_var_v[key] = {}
 
-        # norm_pp_len_h = fun.normalise_profile_plot_length(horizontal, centerpoints_rel, 0)
+        #norm_pp_len_h = fun.normalise_profile_plot_length(horizontal, centerpoints_rel, 0)
         norm_pp_len_h = horizontal
-        x_abs, centerpoints_rel, diameter_x, droplet_found_x = fun.compute_droplet_from_peaks(x, y, r, f, horizontal,
-                                                                                              centerpoints_rel, 0, r_old)
-        # norm_pp_len_v = fun.normalise_profile_plot_length(vertical, centerpoints_rel, 1)
+        x_abs, centerpoints_rel, diameter_x, droplet_found_x = fun.compute_droplet_from_peaks(x, y, r, f, horizontal, centerpoints_rel, 0, r_old, r_droplet_old, avg_sum_prev)
+        # ^return: , x_droph, y_droph, r_droph, avg_sumh, droplet_coords
+
+        #norm_pp_len_v = fun.normalise_profile_plot_length(vertical, centerpoints_rel, 1)
         norm_pp_len_v = vertical
-        y_abs, centerpoints_rel, diameter_y, droplet_found_y = fun.compute_droplet_from_peaks(x, y, r, f, vertical,
-                                                                                              centerpoints_rel, 1, r_old)
+        y_abs, centerpoints_rel, diameter_y, droplet_found_y = fun.compute_droplet_from_peaks(x, y, r, f, vertical, centerpoints_rel, 1, r_old, r_droplet_old, avg_sum_prev)
+        # ^return: , x_dropv, y_dropv, r_dropv, avg_sumv, _
+
+        # FOR TESTING
+        #x_droplet, y_droplet, r_droplet, avg_sum = fun.avg_calculate_droplet(x_droph, x_dropv, y_droph, y_dropv,
+        #                                                            r_droph, r_dropv, r_droplet_old, avg_sumh, avg_sumv)
 
         if droplet_found_y is True and droplet_found_x is True:
             if diameter_y < diameter_x:
@@ -156,6 +164,8 @@ def droplet_detection(diameter, imgage, well_data, elon_mask, centerpoints_rel, 
         # update r_old
         r_old[0] = int(diameter_x/2)
         r_old[1] = int(diameter_y/2)
+        #r_droplet_old = r_droplet
+        #avg_sum_prev = avg_sum
 
         # array with absolute droplet values; 0 = current, 1 = previous
         droplet_arr[0, 0] = radius_droplet
@@ -200,9 +210,16 @@ def droplet_detection(diameter, imgage, well_data, elon_mask, centerpoints_rel, 
         horizontal = 0
         vertical = 0
 
+        x_droplet = 0
+        y_droplet = 0
+        r_droplet = 0
+        avg_sum_prev = 0
+        droplet_coords = 0
+
     print("- droplet found:", droplet_found)
 
-    return x_abs, y_abs, centerpoints_rel, well_data, mask, masked_img, droplet_found, l, l_vert, norm_pp_len_h, norm_pp_len_v, img, f, N, E, S, W, x, y, droplet_arr, areas, r_old_hv, horizontal, vertical, r_0
+    return x_abs, y_abs, centerpoints_rel, well_data, mask, masked_img, droplet_found, l, l_vert, norm_pp_len_h, norm_pp_len_v, img, f, N, E, S, W, x, y, droplet_arr, areas, r_old_hv, horizontal, vertical, r_0, \
+           #x_droplet, y_droplet, r_droplet, r_droplet_old, avg_sum_prev, droplet_coords
 
 
 # Detect LLPS
