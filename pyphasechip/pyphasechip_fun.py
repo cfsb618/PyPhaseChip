@@ -362,105 +362,26 @@ def compute_droplet_from_peaks(x: int, y: int, r: int, f: float, pp_arrays: np.n
                 edges_idx[n, 0] = mid - i
                 break
         
-        #droplet_coordinates = compute_coordinates(edges_idx, x, y, r, f, j, n, droplet_coordinates)  # FOR TESTING
+        droplet_coordinates = compute_coordinates(edges_idx, x, y, r, f, j, n, droplet_coordinates)  # FOR TESTING
 
         mid_rel_pp_plots[n, j] = int((edges_idx[n, 0] + edges_idx[n, 1]) / 2)
         print(n, j, "L:", edges_idx[n, 0], "R:", edges_idx[n, 1], "m:", mid_rel_pp_plots[n, j])
         dia_temp[j] = np.subtract(edges_idx[n, 1], edges_idx[n, 0])
 
-    # FOR TESTING
-    #circles = compute_circles(droplet_coordinates)
-    ##circles, avg_sum = filter_edges(circles, radius_droplet_old, avg_sum_prev)
     # optimiser from dinesh:
-    #x_d, y_d = filter_coordinates(droplet_coordinates, 238, n, radius_droplet_old)
-    #x_droplet, y_droplet, r_droplet = optimise_circle(x_d, y_d)
-    #avg_sum = 0
-    #print("THIS IS DA OPTIMIZER:", x_opt, y_opt, r_opt)
+    x_d, y_d = filter_coordinates(droplet_coordinates, 238, n, radius_droplet_old)
+    x_droplet, y_droplet, r_droplet = optimise_circle(x_d, y_d)
+    avg_sum = 0
 
-    #if np.any(circles) != 0:
-    #    x_droplet, y_droplet, r_droplet = calculate_droplet(circles)
-    #else:
-    #    # ToDo: change print statement to droplet_found
-    #    x_droplet = 0
-    #    y_droplet = 0
-    #    r_droplet = 0
-    #    print("test: droplet found: false")
-
-    # filter
-    # if radius_temp is bigger than radius from previous droplet: delete it, its wrong
-    print("r_old:", radius_old)
-    if radius_old[n] != 0:
-        for idx in range(len(dia_temp)):
-            if dia_temp[idx] > int(radius_old[n] * 2.2):
-                print("diameter temp", dia_temp[idx], ">", "diameter old (big)", (radius_old[n] * 2.2))
-                print("r_deleted:", idx, dia_temp[idx])
-                dia_temp[idx] = 0
-                mid_rel_pp_plots[n, idx] = 0
-                delta_midpoints[idx] = 0
-
-            if dia_temp[idx] < int(radius_old[n] * 1.7) and dia_temp[idx] != 0:
-                print("diameter temp", dia_temp[idx],  "<", "diameter old (small)", (radius_old[n] * 1.7))
-                print("r_deleted:", idx, dia_temp[idx])
-                dia_temp[idx] = 0
-                mid_rel_pp_plots[n, idx] = 0
-                delta_midpoints[idx] = 0
-
-    print("result after first filters")
-    print(mid_rel_pp_plots[n, :])
-
-    # if mid-value deviates too much from avg, set it to zero
-    avg = np.sum(mid_rel_pp_plots[n, :]) / np.count_nonzero(mid_rel_pp_plots[n, :])
-    for j in range(7):
-        if mid_rel_pp_plots[n, j] != 0:
-            delta_midpoints[j] = abs((mid_rel_pp_plots[n, j]/avg) * 100 - 100)
-
-    while np.max(delta_midpoints) > 10:
-        print("average in while loop:", avg, " - np.max:", np.max(delta_midpoints))
-        for idx, val in enumerate(delta_midpoints):
-            if val == np.max(delta_midpoints):
-                print("delets idx:", idx)
-                mid_rel_pp_plots[n, idx] = 0
-                delta_midpoints[idx] = 0
-                dia_temp[idx] = 0
-                break
-
-        avg = np.sum(mid_rel_pp_plots[n, :]) / np.count_nonzero(mid_rel_pp_plots[n, :])
-        for j in range(7):
-            if delta_midpoints[j] != 0:
-                delta_midpoints[j] = abs((mid_rel_pp_plots[n, j] / avg) * 100 - 100)
-
-    print("result after both filters:")
-    print("midpoints", mid_rel_pp_plots[n, :])
-    print("diameters", dia_temp)
-
-    # calculate centerpoint
-    # sometimes, all arrays equal zero due to llps happening bot got not detected (too much dirt)
-    # if so, use old values
-    if n == 0:
-        start_value = start_x
-    else:
-        start_value = start_y
-
-    if np.any(mid_rel_pp_plots) != 0:
-        centerpoint_rel = int(np.sum(mid_rel_pp_plots[n, :])/np.count_nonzero(mid_rel_pp_plots[n, :]))
-        print("result: mid_rel calc: ", centerpoint_rel)
-
-        centerpoint_abs = centerpoint_rel + start_value
-        centerpoints_rel[0, n] = centerpoint_rel
-
-        diameter = int(np.sum(dia_temp) / np.count_nonzero(dia_temp))
+    if x_droplet != 0:
         droplet_found = True
     else:
-        diameter = int(radius_old[n] * 2 * 0.8)
-        droplet_found = True
-        centerpoint_abs = int(centerpoints_rel[1, n] + start_value)
-        print("Used centerpoint from prev. droplet:", centerpoint_abs)
+        droplet_found = False
 
-    return centerpoint_abs, centerpoints_rel, diameter, droplet_found, \
-           #x_droplet, y_droplet, r_droplet, avg_sum, droplet_coordinates
+    return droplet_found, x_droplet, y_droplet, r_droplet, avg_sum, droplet_coordinates
 
 
-def optimise_circle(x: np.ndarray, y: np.ndarray):  # -> tuple[float, float, float]
+def optimise_circle(x: list, y: list):  # -> tuple[float, float, float]
     # coordinates of the barycenter
     x_m = np.mean(x)
     y_m = np.mean(y)
@@ -517,15 +438,15 @@ def filter_coordinates(droplet_coordinates: np.ndarray, threshold, n, r_prev):  
     perc_delta_midpoints = []
     for j in range(len(midpoints)):
         if midpoints[j] != 0:
-            perc_delta_midpoints.append(abs((midpoints[j]/mean_midpoints) * 100 - 100))
+            perc_delta_midpoints.append(abs((midpoints[j] / mean_midpoints) * 100 - 100))
 
-    while np.max(perc_delta_midpoints) > 10:
+    while np.max(perc_delta_midpoints) > 5:
         for idx, val in enumerate(perc_delta_midpoints):
             if val == np.max(perc_delta_midpoints):
-                del(midpoints[idx])
-                del(perc_delta_midpoints[idx])
-                x_d = np.delete(x_d, (idx, idx + 1))
-                y_d = np.delete(y_d, (idx, idx + 1))
+                del (midpoints[idx])
+                del (perc_delta_midpoints[idx])
+                x_d = np.delete(x_d, (idx * 2, idx * 2 + 1))
+                y_d = np.delete(y_d, (idx * 2, idx * 2 + 1))
                 break
 
         avg = np.sum(midpoints) / len(midpoints)
@@ -537,20 +458,16 @@ def filter_coordinates(droplet_coordinates: np.ndarray, threshold, n, r_prev):  
         r_prev = r_prev
     else:
         r_prev = threshold / 2
+
     # update m
     if n == 0:
         m = x_d
     else:
         m = y_d
 
-    print("len xd", len(x_d))
     for idx in range(0, len(m), 2):
-        print("len", len(m))
-        print("idx", idx)
-        if (delta := np.abs(m[idx] - m[idx + 1])) <= threshold and np.abs((m[idx] - m[idx + 1]) / 2) < r_prev * 1.2:
-
-            #print(delta)
-
+        if (delta := np.abs(m[idx] - m[idx + 1])) <= threshold and np.abs((m[idx] - m[idx + 1]) / 2) < r_prev * 1.1:
+            # print(delta)
             filtered_list_x.append(x_d[idx])
             filtered_list_x.append(x_d[idx + 1])
             filtered_list_y.append(y_d[idx])
@@ -1058,7 +975,7 @@ def LLPS_detection(mean_of_current_image, percental_threshold, areas, droplet_ar
         avg_mean_all_previous_images = mean_abs
 
     # Calculate percental difference between current mean value and average mean of all previous images
-    percental_difference = abs((mean_abs / avg_mean_all_previous_images) * 100 - 100)
+    percental_difference = (mean_abs / avg_mean_all_previous_images) * 100 - 100
     print("perc. diff.: ", percental_difference)
 
     if percental_difference > percental_threshold:

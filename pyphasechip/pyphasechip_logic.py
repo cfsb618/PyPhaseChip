@@ -102,7 +102,7 @@ def images_to_dict(h, iph, n_concentrations, n_wells, image_list, image_names, b
 
 # Detect the wells and the droplets within them
 # create mask when necessary
-def droplet_detection(diameter, imgage, well_data, elon_mask, centerpoints_rel, llps_status, droplet_arr, r_0, time_idx, areas, r_old_hv, r_droplet_old, avg_sum_prev):
+def droplet_detection(diameter, imgage, well_data, elon_mask, centerpoints_rel, llps_status, droplet_arr, r_0, time_idx, r_old_hv, r_droplet_old, avg_sum_prev):
 
     r_old = r_old_hv
 
@@ -120,7 +120,7 @@ def droplet_detection(diameter, imgage, well_data, elon_mask, centerpoints_rel, 
 
         f, N, E, S, W = fun.calculate_profile_plot_coordinates(x, y, r)
         imgg = cv2.dilate(img.copy(), (5, 5), iterations=1)  # JUST A TEST
-        l, l_vert, length_arr, _, _ = fun.set_profile_plots(imgg, N, E, S, W, x, y, r)
+        # l, l_vert, length_arr, _, _ = fun.set_profile_plots(imgg, N, E, S, W, x, y, r)
         horizontal, vertical = fun.profile_plot_filter(imgg, N, E, S, W, x, y, r)
 
 
@@ -136,59 +136,50 @@ def droplet_detection(diameter, imgage, well_data, elon_mask, centerpoints_rel, 
             droplet_var_h[key] = {}
             droplet_var_v[key] = {}
 
-        #norm_pp_len_h = fun.normalise_profile_plot_length(horizontal, centerpoints_rel, 0)
         norm_pp_len_h = horizontal
-        x_abs, centerpoints_rel, diameter_x, droplet_found_x = fun.compute_droplet_from_peaks(x, y, r, f, horizontal, centerpoints_rel, 0, r_old, r_droplet_old, avg_sum_prev)
-        # ^return: , x_droph, y_droph, r_droph, avg_sumh, droplet_coords
+        droplet_found_x, x_droph, y_droph, r_droph, avg_sumh, droplet_coords = fun.compute_droplet_from_peaks(x, y, r, f, horizontal, centerpoints_rel, 0, r_old, r_droplet_old, avg_sum_prev)
 
-        #norm_pp_len_v = fun.normalise_profile_plot_length(vertical, centerpoints_rel, 1)
         norm_pp_len_v = vertical
-        y_abs, centerpoints_rel, diameter_y, droplet_found_y = fun.compute_droplet_from_peaks(x, y, r, f, vertical, centerpoints_rel, 1, r_old, r_droplet_old, avg_sum_prev)
-        # ^return: , x_dropv, y_dropv, r_dropv, avg_sumv, _
-
-        # FOR TESTING
-        #x_droplet, y_droplet, r_droplet, avg_sum = fun.avg_calculate_droplet(x_droph, x_dropv, y_droph, y_dropv,
-        #                                                            r_droph, r_dropv, r_droplet_old, avg_sumh, avg_sumv)
+        droplet_found_y, x_dropv, y_dropv, r_dropv, avg_sumv, _ = fun.compute_droplet_from_peaks(x, y, r, f, vertical, centerpoints_rel, 1, r_old, r_droplet_old, avg_sum_prev)
 
         if droplet_found_y is True and droplet_found_x is True:
-            if diameter_y < diameter_x:
-                radius_droplet = int((diameter_y / 2) * 0.99)
-            else:
-                radius_droplet = int((diameter_x / 2) * 0.99)
             droplet_found = True
+            x_droplet, y_droplet, r_droplet, avg_sum = fun.avg_calculate_droplet(x_droph, x_dropv, y_droph, y_dropv,
+                                                                                 r_droph, r_dropv, r_droplet_old, avg_sumh, avg_sumv)
         else:
             droplet_found = False
-            radius_droplet = 0
+            x_droplet = 0
+            y_droplet = 0
+            r_droplet = 0
+            avg_sum = 0
 
-        print("radius est:", radius_droplet)
-        # update r_old
-        r_old[0] = int(diameter_x/2)
-        r_old[1] = int(diameter_y/2)
-        #r_droplet_old = r_droplet
-        #avg_sum_prev = avg_sum
+        # update radius from previous droplet
+        r_old_hv = r_droplet
+        avg_sum_prev = avg_sum
 
         # array with absolute droplet values; 0 = current, 1 = previous
-        droplet_arr[0, 0] = radius_droplet
-        droplet_arr[0, 1] = x_abs
-        droplet_arr[0, 2] = y_abs
+        droplet_arr[0, 0] = r_droplet
+        droplet_arr[0, 1] = x_droplet
+        droplet_arr[0, 2] = y_droplet
+        droplet_arr[0, 3] = 3.14 * r_droplet**2
 
         # calculate droplet values based on linear extrapolation
         if time_idx == 0:
-            r_0 = radius_droplet
+            r_0 = r_droplet
 
-        if time_idx >= 2:
-            a_0 = 3.14 * r_0**2
-            a_prev = 3.14 * droplet_arr[1, 0]**2
-            t = time_idx - 1
-            m = (a_prev - a_0)/(t - 0)
-            b = a_0
-            a_cur = m * time_idx + b
-            droplet_arr[0, 3] = a_cur
-            print("t:", t, ", m:", m, ", b:", b, ", a_cur:", a_cur)
-            print("a_0:", a_0, ", r_0:", r_0, ", a_prev:", a_prev, ", r_prev:", droplet_arr[1, 0])
-        else:
-            a_calc = 3.14 * radius_droplet**2
-            droplet_arr[0, 3] = a_calc
+        #if time_idx >= 2:
+        #    a_0 = 3.14 * r_0**2
+        #    a_prev = 3.14 * droplet_arr[1, 0]**2
+        #    t = time_idx - 1
+        #    m = (a_prev - a_0)/(t - 0)
+        #    b = a_0
+        #    a_cur = m * time_idx + b
+        #    droplet_arr[0, 3] = a_cur
+        #    print("t:", t, ", m:", m, ", b:", b, ", a_cur:", a_cur)
+        #    print("a_0:", a_0, ", r_0:", r_0, ", a_prev:", a_prev, ", r_prev:", droplet_arr[1, 0])
+        #else:
+        #    a_calc = 3.14 * radius_droplet**2
+        #    droplet_arr[0, 3] = a_calc
 
     else:
         x_abs = 0
@@ -218,8 +209,8 @@ def droplet_detection(diameter, imgage, well_data, elon_mask, centerpoints_rel, 
 
     print("- droplet found:", droplet_found)
 
-    return x_abs, y_abs, centerpoints_rel, well_data, mask, masked_img, droplet_found, l, l_vert, norm_pp_len_h, norm_pp_len_v, img, f, N, E, S, W, x, y, droplet_arr, areas, r_old_hv, horizontal, vertical, r_0, \
-           #x_droplet, y_droplet, r_droplet, r_droplet_old, avg_sum_prev, droplet_coords
+    return well_data, mask, masked_img, droplet_found, norm_pp_len_h, norm_pp_len_v, img, f, N, E, S, W, x, y,\
+           droplet_arr, r_old_hv, horizontal, vertical, r_0, avg_sum_prev, droplet_coords
 
 
 # Detect LLPS
@@ -256,11 +247,15 @@ def detect_LLPS(percental_threshold, droplet_arr, llps_status, manip_img, t, are
         # set threshold to 40% or so
         d = int(0.61 * r_extrapolated)
         cropped_squircled_pixels = squircled_pixels[y - d:y + d, x - d:x + d]
+
         n = 0
         for idx, value in enumerate(cropped_squircled_pixels):
             for i, val in enumerate(cropped_squircled_pixels[idx]):
                 if val == 0:
                     n += 1
+        #n = np.count_nonzero(cropped_squircled_pixels)
+        print("compare", n, np.count_nonzero(cropped_squircled_pixels[idx]))
+
         # print("count zeros", n)
         # Second method
         # set threshold to 30%
