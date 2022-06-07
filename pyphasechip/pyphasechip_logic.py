@@ -26,8 +26,13 @@ import time
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator
+import logging
 
 from pyphasechip import pyphasechip_fun as fun
+
+# Start module level logger
+logging.basicConfig(format='%(name)s :: %(levelname)s :: %(message)s', level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 def create():
@@ -59,16 +64,6 @@ def images_to_list(image_list, image_names, image_folder, extension):
             image_names.append(filename)
 
 
-# save images to list
-def images_to_list_backup(image_list, image_names, image_folder, extension):
-    for image in sorted(os.listdir(image_folder)):
-        filename, ext = os.path.splitext(image)
-        # print(filename)
-        if ext.lower() == extension:
-            image_list.append(cv2.imread(os.path.join(image_folder, image)))
-            image_names.append(filename)
-
-
 # rewrite them into a dict of dicts of dicts of dicts
 def images_to_dict(h, iph, n_concentrations, n_wells, image_list, image_names, bigdict, concentration, well, data_well):
     print("writing images into big dictionary")
@@ -94,8 +89,6 @@ def images_to_dict(h, iph, n_concentrations, n_wells, image_list, image_names, b
                     well_nr += 1
                     n += 1
 
-                    # print('Name:', data_well['name'])
-
             well_nr = 0
         well_nr = 0
 
@@ -103,11 +96,9 @@ def images_to_dict(h, iph, n_concentrations, n_wells, image_list, image_names, b
 # Detect the wells and the droplets within them
 # create mask when necessary
 def droplet_detection(diameter, imgage, well_data, elon_mask, centerpoints_rel, llps_status, droplet_arr, r_0, time_idx, r_old_hv, r_droplet_old, avg_sum_prev):
-
-    r_old = r_old_hv
-
     print("detect wells & droplets and create masks")
     time.sleep(0.5)
+    r_old = r_old_hv
 
     # find well and prepare for droplet detection
     x, y, r, well_data, well_found = fun.find_well_algo(imgage, well_data, diameter, dev=10)
@@ -207,7 +198,7 @@ def droplet_detection(diameter, imgage, well_data, elon_mask, centerpoints_rel, 
         avg_sum_prev = 0
         droplet_coords = 0
 
-    print("- droplet found:", droplet_found)
+    logger.info(f"droplet found (output of droplet_detection): {droplet_found}")
 
     return well_data, mask, masked_img, droplet_found, norm_pp_len_h, norm_pp_len_v, img, f, N, E, S, W, x, y,\
            droplet_arr, r_old_hv, horizontal, vertical, r_0, avg_sum_prev, droplet_coords
@@ -229,7 +220,8 @@ def detect_LLPS(percental_threshold, droplet_arr, llps_status, manip_img, t, are
         if droplet_arr[1, 0] != 0 and abs(droplet_arr[0, 0]/droplet_arr[1, 0] * 100 - 100) > 15:
             x = int(droplet_arr[1, 1])
             y = int(droplet_arr[1, 2])
-            print("Fallback:", x, y)
+            logger.debug("Droplet detection didn't work")
+            logger.debug(f"FALLBACK points: {x}, {y}")
             r_extrapolated = int(droplet_arr[1, 0] * 0.9)
         else:
             r_extrapolated = int(np.sqrt(droplet_arr[0, 3]/3.14))
@@ -254,15 +246,7 @@ def detect_LLPS(percental_threshold, droplet_arr, llps_status, manip_img, t, are
                 if val == 0:
                     n += 1
         #n = np.count_nonzero(cropped_squircled_pixels)
-        print("compare", n, np.count_nonzero(cropped_squircled_pixels[idx]))
-
-        # print("count zeros", n)
-        # Second method
-        # set threshold to 30%
-        #x_squircle, y_squircle = squircled_pixels.shape
-        #count_total = (x_squircle * y_squircle)
-        #mean = (np.sum(squircled_pixels)) / count_total
-        #print("x:", x_abs, "y: ", y_abs, "r: ", radius_droplet, "min_dis.: ", minimal_distance, "0_count: ", n)
+        #print("compare", n, np.count_nonzero(cropped_squircled_pixels[idx]))
 
         if t == 0:
             n_0 = n
@@ -277,7 +261,7 @@ def detect_LLPS(percental_threshold, droplet_arr, llps_status, manip_img, t, are
         droplet_arr[1, 1] = droplet_arr[0, 1]
         droplet_arr[1, 2] = droplet_arr[0, 2]
         droplet_arr[1, 3] = droplet_arr[0, 3]
-        print(droplet_arr)
+        logger.info(f"droplet array after droplet detection: {droplet_arr}")
 
         # blurred_img_prev = blurred_cur
     else:
