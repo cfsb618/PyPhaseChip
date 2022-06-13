@@ -112,7 +112,7 @@ def find_well_algo(img: np.ndarray, well_data: np.ndarray, diameter: int, dev: i
         n -= 0.02
         m += 0.05
         a += 1
-        logger.warning(f"well detection retry counter {a}")
+        logger.warning(f"Could not find well! Retry counter: {a}")
         x, y, r = find_well(img, diameter, n, m)
 
     well_data[0, 0] = x
@@ -124,7 +124,7 @@ def find_well_algo(img: np.ndarray, well_data: np.ndarray, diameter: int, dev: i
         well_found = False
     else:
         well_found = True
-    logger.info(f"well found: {well_found}")
+    logger.debug(f"well found: {well_found}")
 
     return x, y, r, well_data, well_found
 
@@ -230,11 +230,7 @@ def profile_plot_filter(img, N, E, S, W, x, y, r):
 
         for part in zip(*vert_list):
             vert_sum.append(sum(part))
-    #
-    # not needed at implementing stage
-    length_hor = 0
-    length_vert = 0
-    length_array = 0
+
     return hor_sum, vert_sum
 
 
@@ -253,7 +249,7 @@ def compute_droplet_from_peaks(x: int, y: int, r: int, f: float, pp_arrays: np.n
     else:
         centerpoints_rel[1, n] = centerpoints_rel[0, n]
         mid = int(centerpoints_rel[1, n])
-    #print("mid_start:", mid)
+    logger.debug("Compute droplets: used mid:", mid)
 
     # "walk" right/left from center until value is equal 0, save idx, this is our edge
     for j in range(len(pp_arrays)):
@@ -270,7 +266,7 @@ def compute_droplet_from_peaks(x: int, y: int, r: int, f: float, pp_arrays: np.n
         droplet_coordinates = compute_coordinates(edges_idx, x, y, r, f, j, n, droplet_coordinates)  # FOR TESTING
 
         mid_rel_pp_plots[n, j] = int((edges_idx[n, 0] + edges_idx[n, 1]) / 2)
-        logger.info(f"detected edges: h/v:{n}, line: {j}, L: {edges_idx[n, 0]} | R: {edges_idx[n, 1]}, midpoint: {mid_rel_pp_plots[n, j]}")
+        logger.debug(f"detected edges: h/v:{n}, line: {j}, L: {edges_idx[n, 0]} | R: {edges_idx[n, 1]}, midpoint: {mid_rel_pp_plots[n, j]}")
         dia_temp[j] = np.subtract(edges_idx[n, 1], edges_idx[n, 0])
 
     # optimiser from dinesh:
@@ -433,7 +429,7 @@ def compute_coordinates(edges_idx: np.ndarray, x: int, y: int, r: int, f: float,
         droplet_coordinates[line_number, 0, 1] = y_value
         droplet_coordinates[line_number, 1, 0] = edges_idx[n, 1] + start_x
         droplet_coordinates[line_number, 1, 1] = y_value
-        logger.info(f"{droplet_coordinates[line_number, 0, 0]}, {droplet_coordinates[line_number, 0, 1]}, // "
+        logger.debug(f"{droplet_coordinates[line_number, 0, 0]}, {droplet_coordinates[line_number, 0, 1]}, // "
                     f"{droplet_coordinates[line_number, 1, 0]}, {droplet_coordinates[line_number, 1, 1]}")
 
     # vertical:
@@ -521,9 +517,13 @@ def LLPS_detection(mean_of_current_image, percental_threshold, areas, droplet_ar
 
     # Calculate percental difference between current mean value and average mean of all previous images
     percental_difference = (mean_abs / avg_mean_all_previous_images) * 100 - 100
-    logger.info(f"perc. diff.:  {percental_difference}")
+    logger.debug(f"perc. diff.:  {percental_difference}")
 
-    if percental_difference > percental_threshold:
+    # Calculate absolute difference between current mean value and average mean of all previous images
+    abs_difference = abs(np.subtract(mean_abs, avg_mean_all_previous_images))
+    abs_threshhold = 30
+
+    if percental_difference > percental_threshold and abs_difference > abs_threshhold:
         llps_status = True
         # save area to array
         areas[0, 1] = droplet_arr[0, 3]

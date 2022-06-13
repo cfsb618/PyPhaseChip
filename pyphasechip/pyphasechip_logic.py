@@ -48,7 +48,7 @@ def create():
 # save images to list
 def images_to_list(image_list, image_names, image_folder, extension):
     # TODO: Add returns
-    print("Creating and sorting image list")
+    logger.debug("Creating and sorting image list")
     time.sleep(0.2)
     file_list = []
     for file in os.listdir(image_folder):
@@ -65,12 +65,12 @@ def images_to_list(image_list, image_names, image_folder, extension):
 
 
 # rewrite them into a dict of dicts of dicts of dicts
-def images_to_dict(h, iph, n_concentrations, n_wells, image_list, image_names, bigdict, concentration, well, data_well):
-    print("writing images into big dictionary")
+def images_to_dict(n_timepoints, n_concentrations, n_wells, image_list, image_names, bigdict, concentration, well, data_well):
+    logger.debug("writing images into big dictionary")
     time.sleep(0.5)
     well_nr = 0
     n = 0
-    for time_idx in tqdm(range(int(h * iph))):
+    for time_idx in tqdm(range(int(n_timepoints))):
         for conc_nr in range(n_concentrations):
             for n_rows_per_conc in range(2):
                 for n_wells_per_row in range(n_wells):
@@ -96,7 +96,7 @@ def images_to_dict(h, iph, n_concentrations, n_wells, image_list, image_names, b
 # Detect the wells and the droplets within them
 # create mask when necessary
 def droplet_detection(diameter, imgage, well_data, elon_mask, centerpoints_rel, llps_status, droplet_arr, r_0, time_idx, r_old_hv, r_droplet_old, avg_sum_prev):
-    print("detect wells & droplets and create masks")
+    logger.debug("detect wells & droplets and create masks")
     time.sleep(0.5)
     r_old = r_old_hv
 
@@ -173,14 +173,9 @@ def droplet_detection(diameter, imgage, well_data, elon_mask, centerpoints_rel, 
         #    droplet_arr[0, 3] = a_calc
 
     else:
-        x_abs = 0
-        y_abs = 0
-        radius_droplet = 0
         mask = 0
         masked_img = 0
         droplet_found = False
-        l = 0
-        l_vert = 0
         norm_pp_len_h = 0
         norm_pp_len_v = 0
         img = 0
@@ -191,14 +186,10 @@ def droplet_detection(diameter, imgage, well_data, elon_mask, centerpoints_rel, 
         S = 0
         horizontal = 0
         vertical = 0
-
-        x_droplet = 0
-        y_droplet = 0
-        r_droplet = 0
         avg_sum_prev = 0
         droplet_coords = 0
 
-    logger.info(f"droplet found (output of droplet_detection): {droplet_found}")
+    logger.debug(f"droplet found (output of droplet_detection): {droplet_found}")
 
     return well_data, mask, masked_img, droplet_found, norm_pp_len_h, norm_pp_len_v, img, f, N, E, S, W, x, y,\
            droplet_arr, r_old_hv, horizontal, vertical, r_0, avg_sum_prev, droplet_coords
@@ -208,7 +199,7 @@ def droplet_detection(diameter, imgage, well_data, elon_mask, centerpoints_rel, 
 # loop over ALL the images
 def detect_LLPS(percental_threshold, droplet_arr, llps_status, manip_img, t, areas,
                 mean_list, droplet_found, n_0):
-    print("LLPS detection")
+    logger.debug("LLPS detection")
     time.sleep(0.5)
     radius_droplet = droplet_arr[0, 0]
     x = int(droplet_arr[0, 1])
@@ -228,7 +219,6 @@ def detect_LLPS(percental_threshold, droplet_arr, llps_status, manip_img, t, are
 
         # calculate minimal distance from droplet center to edge
         minimal_distance = int(r_extrapolated * 0.9)  # 90% of droplet radius
-        #area_droplet = 3.14159 * radius_droplet**2
 
         # save pixel values within squircle inside droplet
         # squircled_pixels = fun.squircle_iteration(subtracted_img, int(x_abs), int(y_abs), int(minimal_distance))
@@ -261,9 +251,8 @@ def detect_LLPS(percental_threshold, droplet_arr, llps_status, manip_img, t, are
         droplet_arr[1, 1] = droplet_arr[0, 1]
         droplet_arr[1, 2] = droplet_arr[0, 2]
         droplet_arr[1, 3] = droplet_arr[0, 3]
-        logger.info(f"droplet array after droplet detection: {droplet_arr}")
+        logger.debug(f"droplet array after droplet detection: {droplet_arr}")
 
-        # blurred_img_prev = blurred_cur
     else:
         squircled_pixels = 0
         cropped_squircled_pixels = 0
