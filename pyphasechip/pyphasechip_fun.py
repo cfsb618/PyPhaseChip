@@ -20,10 +20,12 @@ https://github.com/dineshpinto
 import cv2
 import numpy as np
 import logging
+import os
 
 # Start module level logger
-logging.basicConfig(format='%(name)s :: %(levelname)s :: %(message)s', level=logging.INFO)
-logger = logging.getLogger(__name__)
+os.remove("PyPhaseChip.log")
+logging.basicConfig(filename="PyPhaseChip.log", format='%(name)s ::  %(message)s', level=logging.DEBUG) # %(levelname)s ::
+logger = logging.getLogger("fun")
 
 
 # adjust brightness & contrast
@@ -89,7 +91,7 @@ def first_derivative(gray_image):
 
 # find the well with the help of hough
 def find_circle(img: np.ndarray, diameter: int, n: float, m: float):
-    dp = 1.1
+    dp = 1.4
     minDist = 450
     param1 = 50
     param2 = 40
@@ -145,22 +147,26 @@ def find_circle_algo(img: np.ndarray, well_data: np.ndarray, diameter: int, dev:
     return x, y, r, well_data, well_found
 
 
-# little algorithm to find the well reliably
-def find_droplet_algo(img: np.ndarray, droplet_data: np.ndarray, diameter: int, dev: int):
+# little algorithm to find the droplet reliably
+def find_droplet_algo(img: np.ndarray, droplet_data: np.ndarray, diameter: int, t, dev: int):
     n = 0
-    m = 1.05
+    m = 1.05 - t * 0.008
     a = 0
-
+    print("detect a droplet")
     # initial detection
     x, y, r = find_circle(img, diameter, n, m)
+    print(f"results: {x},{y},{r}")
+    logger.debug(f"droplet data: x: {x}, y: {y}, r: {r}")
 
     # tries to makes shure that a well is detected
     while x == 0 and a < 5:
+        print("try again to detect a droplet")
+        logger.debug("retry finding droplet...")
         m += 0.05
         a += 1
-        logger.warning(f"Could not find droplet! Retry counter: {a}")
         x, y, r = find_circle(img, diameter, n, m)
-
+        logger.debug(f"results after {a}-retries: {x},{y},{r}")
+        print(f"results after {a}-retries: {x},{y},{r}")
     droplet_data[0, 0] = x
     droplet_data[0, 1] = y
     droplet_data[0, 2] = r
@@ -176,350 +182,54 @@ def find_droplet_algo(img: np.ndarray, droplet_data: np.ndarray, diameter: int, 
     return x, y, r, droplet_data, droplet_found
 
 
-def mask_img_circle(image, x, y, r):
-    f = 0.96
+def find_multiple_droplets(threshold_img, xw, yw, rw):
+    # detects if there are multiple droplets in a well
+    # also kicks out too small droplets
+    n = 0
+    f = 0.65
+    threshold = 400
+
+    eroded = cv2.dilate(threshold_img.copy(), (20, 20), iterations=4)
+    crop = eroded[int(yw - rw * f):int(yw + rw * f), int(xw - rw * f):int(xw + rw * f)]
+
+    for x, y in np.ndindex(crop.shape):
+        if crop[x, y] == 0:
+            n += 1
+    print(f"multiple_droplets: n = {n}")
+    if n > threshold:
+        multidroplet = True
+        print("find_multiple_droplets was triggered!")
+        logger.warning("find_multiple_droplets was triggered!")
+        logger.warning(f"count: n = {n}")
+    else:
+        multidroplet = False
+
+    return multidroplet
+
+
+def mask_img_circle(image, x, y, r, t):
+    if t <= 10:
+        a = t * 0.002
+    else:
+        a = 0.02
+
+    f = 0.95 - a
     d = 250
+
     img_c = cv2.circle(image, (x, y), int(r * f + d), color=(255, 255, 255), thickness=d * 2)
 
     return img_c
 
 
 def image_manipulation(masked_img, x, y, r):
-    d = 3
-    #img_circle = cv2.circle(masked_img, (x, y), r+d, (0, 0, 0), d*2)
     img_circle = masked_img
-    blur = cv2.blur(img_circle.copy(), (5, 5))
+    blur = cv2.blur(img_circle.copy(), (2, 2))
     thresh_adpt = cv2.adaptiveThreshold(blur.copy(), 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
     morph = cv2.morphologyEx(thresh_adpt.copy(), cv2.MORPH_CLOSE, (8, 8), iterations=1)
     # morph = cv2.erode(thresh_adpt, (5, 5), iterations=5)
     img = cv2.dilate(morph.copy(), (2, 2), iterations=1)
 
     return img
-
-
-def calculate_profile_plot_coordinates(x, y, r):
-    f = 1.1
-    W = int(x - f * r)
-    E = int(x + f * r)
-    N = int(y - f * r)
-    S = int(y + f * r)
-
-    return f, N, E, S, W
-
-
-def set_profile_plots2(img, N, E, S, W, x, y, r, d, j):
-    horizontal = []
-    vertical = []
-
-    value = coordinates_value_selector(j, r, x, y, 0)
-    horizontal.append(img[int(value + d), W:E])
-
-    value = coordinates_value_selector(j, r, x, y, 1)
-    vertical.append(img[N:S, int(value + d)])
-
-    return horizontal, vertical
-
-
-def profile_plot_filter(img, N, E, S, W, x, y, r):
-    # sum profile plots
-    adjacent = [-1, 0, 1]
-
-    hor_sum = []
-    vert_sum = []
-
-    for j in range(7):
-        hor_list = []
-        vert_list = []
-        for d in adjacent:
-            horizontal, vertical = set_profile_plots2(img, N, E, S, W, x, y, r, d, j)
-            hor_list.append(horizontal)
-            vert_list.append(vertical)
-
-        logger.debug(f"horizontal profile plots: {hor_list}")
-        for part in zip(*hor_list):
-            hor_sum.append(sum(part))
-
-        for part in zip(*vert_list):
-            vert_sum.append(sum(part))
-
-    return hor_sum, vert_sum
-
-
-def compute_droplet_from_peaks(x: int, y: int, r: int, f: float, pp_arrays: np.ndarray, centerpoints_rel: np.ndarray,
-                               n: int, radius_old: np.ndarray, radius_droplet_old: int, avg_sum_prev: int):
-    # n can be 0 for horizontal or 1 for vertical
-    edges_idx = np.zeros(shape=(2, 2))
-    mid_rel_pp_plots = np.zeros(shape=(2, 7))
-    dia_temp = np.zeros(7)
-    droplet_coordinates = np.zeros(shape=(7, 2, 2))  # [line_nr, edge 1/2, x/y values]
-
-    # TODO: adjust for optimizer: this way it doesnt to shit, mid important for edge detection
-    # accounts for a moving droplet center
-    if centerpoints_rel[0, n] == 0:
-        mid = int(len(pp_arrays[3]) / 2)
-    else:
-        centerpoints_rel[1, n] = centerpoints_rel[0, n]
-        mid = int(centerpoints_rel[1, n])
-    logger.debug("Compute droplets: used mid:", mid)
-
-    # "walk" right/left from center until value is equal 0, save idx, this is our edge
-    for j in range(len(pp_arrays)):
-        for i in range(1, len(pp_arrays[j]) - mid):
-            if pp_arrays[j][mid + i] == 0:
-                edges_idx[n, 1] = mid + i
-                break
-
-        for i in range(1, mid):
-            if pp_arrays[j][mid - i] == 0:
-                edges_idx[n, 0] = mid - i
-                break
-
-        droplet_coordinates = compute_coordinates(edges_idx, x, y, r, f, j, n, droplet_coordinates)  # FOR TESTING
-
-        mid_rel_pp_plots[n, j] = int((edges_idx[n, 0] + edges_idx[n, 1]) / 2)
-        logger.debug(f"detected edges: h/v:{n}, line: {j}, L: {edges_idx[n, 0]} | R: {edges_idx[n, 1]}, midpoint: {mid_rel_pp_plots[n, j]}")
-        dia_temp[j] = np.subtract(edges_idx[n, 1], edges_idx[n, 0])
-
-    # optimiser from Dinesh:
-    x_d, y_d = filter_coordinates(droplet_coordinates, n, radius_droplet_old)
-    x_droplet, y_droplet, r_droplet = optimise_circle(x_d, y_d)
-    avg_sum = 0
-
-    if x_droplet != 0:
-        droplet_found = True
-    else:
-        droplet_found = False
-
-    return droplet_found, x_droplet, y_droplet, r_droplet, avg_sum, droplet_coordinates
-
-
-def optimise_circle(x: list, y: list):  # -> tuple[float, float, float]
-    """
-    This function is also born out of the head of Dinesh Pinto
-    thank you very much
-    """
-
-    # coordinates of the barycenter
-    x_m = np.mean(x)
-    y_m = np.mean(y)
-
-    # calculation of the reduced coordinates
-    u = x - x_m
-    v = y - y_m
-
-    # linear system defining the center (uc, vc) in reduced coordinates:
-    #    Suu * uc +  Suv * vc = (Suuu + Suvv)/2
-    #    Suv * uc +  Svv * vc = (Suuv + Svvv)/2
-    Suv = np.sum(u * v)
-    Suu = np.sum(u ** 2)
-    Svv = np.sum(v ** 2)
-    Suuv = np.sum(u ** 2 * v)
-    Suvv = np.sum(u * v ** 2)
-    Suuu = np.sum(u ** 3)
-    Svvv = np.sum(v ** 3)
-
-    # Solving the linear system
-    A = np.array([[Suu, Suv], [Suv, Svv]])
-    B = np.array([Suuu + Suvv, Svvv + Suuv]) / 2.0
-    uc, vc = np.linalg.solve(A, B)
-
-    xc_1 = x_m + uc
-    yc_1 = y_m + vc
-
-    Ri_1 = np.sqrt((x - xc_1) ** 2 + (y - yc_1) ** 2)
-    R_1 = np.mean(Ri_1)
-    residu_1 = np.sum((Ri_1 - R_1) ** 2)
-    return xc_1, yc_1, R_1
-
-
-def filter_coordinates(droplet_coordinates: np.ndarray, n, r_prev):  # -> Tuple[np.ndarray, np.ndarray]:
-    x_d, y_d = np.hsplit(droplet_coordinates.reshape(14, 2), 2)
-    x_d, y_d = x_d.flatten(), y_d.flatten()
-
-    filtered_list_x, filtered_list_y = [], []
-
-    if n == 0:
-        m = x_d
-    else:
-        m = y_d
-
-
-    midpoints = []
-    for idx in range(0, len(m), 2):
-        temp = np.abs(m[idx] + m[idx + 1])
-        mid_point = temp / 2
-        midpoints.append(mid_point)
-    mean = sum(midpoints) / len(midpoints)
-    mean_midpoints = int(mean)
-
-    perc_delta_midpoints = []
-    for j in range(len(midpoints)):
-        if midpoints[j] != 0:
-            perc_delta_midpoints.append(abs((midpoints[j] / mean_midpoints) * 100 - 100))
-
-    print("Filter | initial midpoints list", midpoints)
-    while np.max(perc_delta_midpoints) > 5:
-        for idx, val in enumerate(perc_delta_midpoints):
-            if val == np.max(perc_delta_midpoints):
-                del (midpoints[idx])
-                del (perc_delta_midpoints[idx])
-                x_d = np.delete(x_d, (idx * 2, idx * 2 + 1))
-                y_d = np.delete(y_d, (idx * 2, idx * 2 + 1))
-                break
-
-        avg = np.sum(midpoints) / len(midpoints)
-        for j in range(len(perc_delta_midpoints)):
-            if perc_delta_midpoints[j] != 0:
-                perc_delta_midpoints[j] = abs((midpoints[j] / avg) * 100 - 100)
-    logger.debug("Filter | midpoint deltas after filtering:", perc_delta_midpoints)
-    print(("Filter | midpoint deltas after filtering:", perc_delta_midpoints))
-
-    # update m
-    if n == 0:
-        m = x_d
-    else:
-        m = y_d
-
-    diameter_list = []
-    for idx in range(0, len(m), 2):
-        diameter_list.append(np.abs(m[idx] - m[idx + 1]))
-    threshold = np.sum(diameter_list)/len(diameter_list)
-    logger.debug("Filter | initial diameters list:", diameter_list)
-    print("Filter | initial diameters list:", diameter_list)
-
-    if r_prev != 0:
-        r_prev = r_prev
-    else:
-        r_prev = 218
-
-    perc_delta_diameters = []
-    for j in range(len(diameter_list)):
-        if diameter_list[j] != 0:
-            perc_delta_diameters.append(abs((diameter_list[j] / threshold) * 100 - 100))
-
-    while np.max(perc_delta_diameters) > 5:
-        for idx, val in enumerate(perc_delta_diameters):
-            if val == np.max(perc_delta_diameters):
-                del (diameter_list[idx])
-                del (perc_delta_diameters[idx])
-
-                x_d = np.delete(x_d, (idx * 2, idx * 2 + 1))
-                y_d = np.delete(y_d, (idx * 2, idx * 2 + 1))
-                break
-
-        avg = np.sum(diameter_list) / len(diameter_list)
-        for j in range(len(perc_delta_diameters)):
-            if perc_delta_diameters[j] != 0:
-                perc_delta_diameters[j] = abs((diameter_list[j] / avg) * 100 - 100)
-
-        # update m
-    if n == 0:
-        m = x_d
-    else:
-        m = y_d
-
-    logger.debug("Filter | diameters after while-loop:", diameter_list)
-    print(("Filter | diameters after while-loop:", diameter_list))
-    for idx in range(0, len(m), 2):
-        if np.abs((m[idx] - m[idx + 1]) / 2) < r_prev * 1.1:
-
-            filtered_list_x.append(x_d[idx])
-            filtered_list_x.append(x_d[idx + 1])
-            filtered_list_y.append(y_d[idx])
-            filtered_list_y.append(y_d[idx + 1])
-
-    logger.debug("Filter | list-x output after filtering:", filtered_list_x)
-    print("Filter | list-x output after filtering:", filtered_list_x)
-    return filtered_list_x, filtered_list_y
-
-
-def avg_calculate_droplet(xh, xv, yh, yv, rh, rv, r_prev, avg_sumh, avg_sumv):
-    # calculates difference from previous position and radius
-    # takes value that is closer to previous pos/r
-    logger.debug("Cal. avg. droplet | Incoming values for calculating droplet, delivered by circle optimiser")
-    logger.debug(f"Cal. avg. droplet | horizontal:({int(xh)}, {int(yh)}, {int(rh)}) | vertical: ({int(xv)}, {int(yv)}, {int(rv)}")
-
-    if rv != 0 and rh != 0:
-        if r_prev != 0:
-            delta_h = abs(np.subtract(rh, r_prev))
-            delta_v = abs(np.subtract(rv, r_prev))
-            if delta_h < delta_v:
-                r_droplet = rh
-            else:
-                r_droplet = rv
-        else:
-            r_droplet = np.min((rh, rv))
-        x_droplet = int((xh + xv) / 2)
-        y_droplet = int((yh + yv) / 2)
-        avg_sum = int((avg_sumh + avg_sumv) / 2)
-
-    elif rv != 0 and rh == 0:
-        r_droplet = rv
-        x_droplet = xv
-        y_droplet = yv
-        avg_sum = avg_sumv
-    else:
-        r_droplet = rh
-        x_droplet = xh
-        y_droplet = yh
-        avg_sum = avg_sumh
-
-    return x_droplet, y_droplet, r_droplet, avg_sum
-
-
-def compute_coordinates(edges_idx: np.ndarray, x: int, y: int, r: int, f: float, line_number: int, n: int,
-                        droplet_coordinates: np.ndarray):
-    # compute absolute circle coordinates and store them in list
-    # used after each time edges_idexes get detected
-
-    # choose values to compute coordinates, then compute them
-    # horizontal:
-    if n == 0:
-        y_value = coordinates_value_selector(line_number, r, x, y, n)
-        start_x = int(x - r * f)  # x-values where the horizontal lines start
-
-        droplet_coordinates[line_number, 0, 0] = edges_idx[n, 0] + start_x
-        droplet_coordinates[line_number, 0, 1] = y_value
-        droplet_coordinates[line_number, 1, 0] = edges_idx[n, 1] + start_x
-        droplet_coordinates[line_number, 1, 1] = y_value
-        logger.debug(f"{droplet_coordinates[line_number, 0, 0]}, {droplet_coordinates[line_number, 0, 1]}, // "
-                    f"{droplet_coordinates[line_number, 1, 0]}, {droplet_coordinates[line_number, 1, 1]}")
-
-    # vertical:
-    else:
-        x_value = coordinates_value_selector(line_number, r, x, y, n)
-        start_y = int(y - r * f)  # y-values where the vertical lines start
-
-        droplet_coordinates[line_number, 0, 0] = x_value
-        droplet_coordinates[line_number, 0, 1] = edges_idx[n, 0] + start_y
-        droplet_coordinates[line_number, 1, 0] = x_value
-        droplet_coordinates[line_number, 1, 1] = edges_idx[n, 1] + start_y
-
-    return droplet_coordinates
-
-
-def coordinates_value_selector(profile_plot_number: int, r: int, x: int, y: int, n: int):
-    if n == 0:
-        m = y
-    else:
-        m = x
-
-    if profile_plot_number == 0:
-        value = m - 1.5 * r / 2
-    elif profile_plot_number == 1:
-        value = m - 1.0 * r / 2
-    elif profile_plot_number == 2:
-        value = m - 0.5 * r / 2
-    elif profile_plot_number == 3:
-        value = m
-    elif profile_plot_number == 4:
-        value = m + 0.5 * r / 2
-    elif profile_plot_number == 5:
-        value = m + 1.0 * r / 2
-    else:
-        value = m + 1.5 * r / 2
-
-    return value
 
 
 # iterate over img; starts in the center of the droplet, spirales out of it until edge is reached
@@ -560,8 +270,9 @@ def squircle_iteration(img, x0, y0, radius):
 
 
 # LLPS detector
-def LLPS_detection(n_black_pxls, percental_threshold, areas, droplet_arr, mean_list):
-    mean_abs = n_black_pxls
+def LLPS_detector(n_black_pxls, percental_threshold, areas, droplet_arr, mean_list, r_extrapolated):
+    mean_abs = n_black_pxls/r_extrapolated # not abs anymore, now norm
+    logger.debug(f"mean norm:  {mean_abs}")
 
     if len(mean_list) > 1:
         avg_mean_all_previous_images = np.mean(mean_list)
@@ -571,13 +282,14 @@ def LLPS_detection(n_black_pxls, percental_threshold, areas, droplet_arr, mean_l
     if n_black_pxls != 0:
         # Calculate percental difference between current mean value and average mean of all previous images
         percental_difference = (mean_abs / avg_mean_all_previous_images) * 100 - 100
-        logger.debug(f"perc. diff.:  {percental_difference}")
+        logger.debug(f"perc. diff. (normalised):  {percental_difference}")
 
         # Calculate absolute difference between current mean value and average mean of all previous images
         abs_difference = abs(np.subtract(mean_abs, avg_mean_all_previous_images))
-        abs_threshhold = 30
-
-        if percental_difference > percental_threshold and abs_difference > abs_threshhold:
+        logger.debug(f"absolute difference: {abs_difference}")
+        abs_threshhold = 2.8  # Make this a value determined in the interface
+        # perc_diff_normalised, percental_threshold
+        if 20 < percental_difference and abs_difference > abs_threshhold:
             llps_status = True
             # save area to array
             areas[0, 1] = droplet_arr[0, 3]
@@ -590,6 +302,6 @@ def LLPS_detection(n_black_pxls, percental_threshold, areas, droplet_arr, mean_l
         llps_status = False
 
     mean_list.append(mean_abs)
-    logger.debug("LLPS Detector | mean list:", mean_list)
+    logger.debug(f"LLPS Detector | mean list: {mean_list}")
 
     return llps_status, areas, mean_list
