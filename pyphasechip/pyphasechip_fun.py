@@ -187,7 +187,7 @@ def find_multiple_droplets(threshold_img, xw, yw, rw):
     # also kicks out too small droplets
     n = 0
     f = 0.65
-    threshold = 400
+    threshold = 300 #400
 
     eroded = cv2.dilate(threshold_img.copy(), (20, 20), iterations=4)
     crop = eroded[int(yw - rw * f):int(yw + rw * f), int(xw - rw * f):int(xw + rw * f)]
@@ -216,7 +216,7 @@ def mask_img_circle(image, x, y, r, t):
     f = 0.95 - a
     d = 250
 
-    img_c = cv2.circle(image, (x, y), int(r * f + d), color=(255, 255, 255), thickness=d * 2)
+    img_c = cv2.circle(image, (x, y), int(r * f + d), color=(0, 0, 0), thickness=d * 2)
 
     return img_c
 
@@ -224,7 +224,7 @@ def mask_img_circle(image, x, y, r, t):
 def image_manipulation(masked_img, x, y, r):
     img_circle = masked_img
     blur = cv2.blur(img_circle.copy(), (2, 2))
-    thresh_adpt = cv2.adaptiveThreshold(blur.copy(), 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
+    thresh_adpt = cv2.adaptiveThreshold(blur.copy(), 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 9, 2)
     morph = cv2.morphologyEx(thresh_adpt.copy(), cv2.MORPH_CLOSE, (8, 8), iterations=1)
     # morph = cv2.erode(thresh_adpt, (5, 5), iterations=5)
     img = cv2.dilate(morph.copy(), (2, 2), iterations=1)

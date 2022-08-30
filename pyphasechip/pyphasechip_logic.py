@@ -104,14 +104,13 @@ def droplet_detection(imgage, well_data, diameter, llps_status, multiple_droplet
     img = fun.image_manipulation(imgage.copy(), xw, yw, rw)
     masked_img = fun.mask_img_circle(img, xw, yw, rw, t)
     masked_img_grad = fun.mask_img_circle(grad, xw, yw, rw, t)  # grad = img
-    masked_img_grad
 
     # check for multiple droplets in well
     if t < 6:
         multiple_droplets = fun.find_multiple_droplets(img, xw, yw, rw)
     if t < 6 and multiple_droplets is True:
         multiple_droplets_count += 1
-    if t > 6 and multiple_droplets_count > 3:
+    if t > 6 and multiple_droplets_count >= 5: #3
         multiple_droplets = True
     else:
         multiple_droplets = False
@@ -134,7 +133,7 @@ def droplet_detection(imgage, well_data, diameter, llps_status, multiple_droplet
         droplet_found = False
     print(f"status: droplet_found: {droplet_found}")
     logger.debug(f"status: droplet found: {droplet_found}")
-    return xw, yw, rw, droplet_data, droplet_found, multiple_droplets_count, masked_img_grad, grad, well_data
+    return xw, yw, rw, droplet_data, droplet_found, multiple_droplets_count, masked_img, masked_img_grad, well_data
 
 
 # Detect LLPS
