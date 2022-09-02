@@ -104,6 +104,7 @@ def droplet_detection(imgage, well_data, diameter, llps_status, multiple_droplet
     img = fun.image_manipulation(imgage.copy(), xw, yw, rw)
     masked_img = fun.mask_img_circle(img, xw, yw, rw, t)
     masked_img_grad = fun.mask_img_circle(grad, xw, yw, rw, t)  # grad = img
+    _, masked_img_grad_thresh = cv2.threshold(masked_img_grad, 100, 255, cv2.THRESH_BINARY)
 
     # check for multiple droplets in well
     if t < 6:
@@ -119,7 +120,7 @@ def droplet_detection(imgage, well_data, diameter, llps_status, multiple_droplet
     print(f"well_found: {well_found}, llps_status: {llps_status}")
     if well_found is True and llps_status is False and multiple_droplets is False:
         # detect droplet
-        _, _, _, droplet_data, droplet_found = fun.find_droplet_algo(masked_img_grad, droplet_data, diameter, t, dev=10)
+        _, _, _, droplet_data, droplet_found = fun.find_droplet_algo(masked_img_grad_thresh, droplet_data, diameter, t, dev=10)
 
         # if droplet couldn't be found, it is assumed that it is as big as the well
         if droplet_found is False and t < 5:
@@ -133,18 +134,22 @@ def droplet_detection(imgage, well_data, diameter, llps_status, multiple_droplet
         droplet_found = False
     print(f"status: droplet_found: {droplet_found}")
     logger.debug(f"status: droplet found: {droplet_found}")
-    return xw, yw, rw, droplet_data, droplet_found, multiple_droplets_count, masked_img, masked_img_grad, well_data
+    return xw, yw, rw, droplet_data, droplet_found, multiple_droplets_count, masked_img_grad, masked_img_grad_thresh, well_data
 
 
 # Detect LLPS
 # loop over ALL the images
-def detect_LLPS(percental_threshold, droplet_arr, llps_status, manip_img, t, areas,
+def detect_LLPS(percental_threshold, droplet_arr, llps_status, img, t, areas, #manip_img
                 mean_list, droplet_found, n_0):
     logger.debug("LLPS detection")
     time.sleep(0.5)
     # radius_droplet = droplet_arr[0, 2]
     x = int(droplet_arr[0, 0])
     y = int(droplet_arr[0, 1])
+
+    ### test
+    r = int(droplet_arr[0, 2])
+    manip_img = fun.mask_img_circle(img, x, y, r, t)
 
     if droplet_found is True and llps_status is False:
 
@@ -172,14 +177,9 @@ def detect_LLPS(percental_threshold, droplet_arr, llps_status, manip_img, t, are
         d = int(0.54 * r_extrapolated)  # dumb calculation, make it related to mind_d
         cropped_squircled_pixels = cv2.dilate(squircled_pixels[y - d:y + d, x - d:x + d], (5, 5))  # crop and dilate
 
-        n = 0
-        #for idx, value in enumerate(cropped_squircled_pixels):
-        #    for i, val in enumerate(cropped_squircled_pixels[idx]):
-        #        if val == 0:
-        #            n += 1
-        n = np.count_nonzero(cropped_squircled_pixels == 0)
-        #n = np.count_nonzero(cropped_squircled_pixels)
-        #print("compare", n, np.count_nonzero(cropped_squircled_pixels[idx]))
+        # n = np.count_nonzero(cropped_squircled_pixels == 0)
+        _, thresh = cv2.threshold(cropped_squircled_pixels, 180, 255, cv2.THRESH_BINARY_INV)
+        n = np.sum(thresh)
 
         if t == 0:
             n_0 = n

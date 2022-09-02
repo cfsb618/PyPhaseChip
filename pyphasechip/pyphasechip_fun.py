@@ -91,7 +91,7 @@ def first_derivative(gray_image):
 
 # find the well with the help of hough
 def find_circle(img: np.ndarray, diameter: int, n: float, m: float):
-    dp = 1.4
+    dp = 1.6
     minDist = 450
     param1 = 50
     param2 = 40
@@ -187,7 +187,7 @@ def find_multiple_droplets(threshold_img, xw, yw, rw):
     # also kicks out too small droplets
     n = 0
     f = 0.65
-    threshold = 300 #400
+    threshold = 500 #400
 
     eroded = cv2.dilate(threshold_img.copy(), (20, 20), iterations=4)
     crop = eroded[int(yw - rw * f):int(yw + rw * f), int(xw - rw * f):int(xw + rw * f)]
@@ -289,7 +289,7 @@ def LLPS_detector(n_black_pxls, percental_threshold, areas, droplet_arr, mean_li
         logger.debug(f"absolute difference: {abs_difference}")
         abs_threshhold = 2.8  # Make this a value determined in the interface
         # perc_diff_normalised, percental_threshold
-        if 20 < percental_difference and abs_difference > abs_threshhold:
+        if 15 < percental_difference and abs_difference > abs_threshhold:
             llps_status = True
             # save area to array
             areas[0, 1] = droplet_arr[0, 3]
