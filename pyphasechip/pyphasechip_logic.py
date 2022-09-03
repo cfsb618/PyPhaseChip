@@ -105,6 +105,8 @@ def droplet_detection(imgage, well_data, diameter, llps_status, multiple_droplet
     masked_img = fun.mask_img_circle(img, xw, yw, rw, t)
     masked_img_grad = fun.mask_img_circle(grad, xw, yw, rw, t)  # grad = img
     _, masked_img_grad_thresh = cv2.threshold(masked_img_grad, 100, 255, cv2.THRESH_BINARY)
+    masked_img_grad_thresh_dil = cv2.dilate(masked_img_grad_thresh, (30, 30), iterations=5)
+    masked_img_grad_thresh_blur = cv2.blur(masked_img_grad_thresh_dil, (5, 5))
 
     # check for multiple droplets in well
     if t < 6:
@@ -120,7 +122,7 @@ def droplet_detection(imgage, well_data, diameter, llps_status, multiple_droplet
     print(f"well_found: {well_found}, llps_status: {llps_status}")
     if well_found is True and llps_status is False and multiple_droplets is False:
         # detect droplet
-        _, _, _, droplet_data, droplet_found = fun.find_droplet_algo(masked_img_grad_thresh, droplet_data, diameter, t, dev=10)
+        _, _, _, droplet_data, droplet_found = fun.find_droplet_algo(masked_img_grad_thresh_blur, droplet_data, diameter, t, dev=10)
 
         # if droplet couldn't be found, it is assumed that it is as big as the well
         if droplet_found is False and t < 5:
@@ -134,7 +136,7 @@ def droplet_detection(imgage, well_data, diameter, llps_status, multiple_droplet
         droplet_found = False
     print(f"status: droplet_found: {droplet_found}")
     logger.debug(f"status: droplet found: {droplet_found}")
-    return xw, yw, rw, droplet_data, droplet_found, multiple_droplets_count, masked_img_grad, masked_img_grad_thresh, well_data
+    return xw, yw, rw, droplet_data, droplet_found, multiple_droplets_count, masked_img_grad, masked_img_grad_thresh_blur, well_data
 
 
 # Detect LLPS
@@ -179,7 +181,7 @@ def detect_LLPS(percental_threshold, droplet_arr, llps_status, img, t, areas, #m
 
         # n = np.count_nonzero(cropped_squircled_pixels == 0)
         _, thresh = cv2.threshold(cropped_squircled_pixels, 180, 255, cv2.THRESH_BINARY_INV)
-        n = np.sum(thresh)
+        n = np.sum(thresh) + (cropped_squircled_pixels.shape[0]**2 - np.count_nonzero(cropped_squircled_pixels))
 
         if t == 0:
             n_0 = n
