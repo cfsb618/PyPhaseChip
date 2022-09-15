@@ -127,8 +127,8 @@ def find_circle_algo(img: np.ndarray, well_data: np.ndarray, diameter: int, dev:
 
     # tries to makes shure that a well is detected
     while x == 0 and a < 5:
-        n -= 0.05
-        m += 0.05
+        n -= 0.08
+        m += 0.08
         a += 1
         logger.warning(f"Could not find well! Retry counter: {a}")
         x, y, r = find_circle(img, diameter, n, m)
@@ -287,9 +287,9 @@ def LLPS_detector(n_black_pxls, percental_threshold, areas, droplet_arr, mean_li
         # Calculate absolute difference between current mean value and average mean of all previous images
         abs_difference = abs(np.subtract(mean_abs, avg_mean_all_previous_images))
         logger.debug(f"absolute difference: {abs_difference}")
-        abs_threshhold = 2.8  # Make this a value determined in the interface
+        abs_threshhold = 3  # Make this a value determined in the interface
         # perc_diff_normalised, percental_threshold
-        if 15 < percental_difference and abs_difference > abs_threshhold:
+        if 2400 < percental_difference and abs_difference > abs_threshhold:
             llps_status = True
             # save area to array
             areas[0, 1] = droplet_arr[0, 3]
