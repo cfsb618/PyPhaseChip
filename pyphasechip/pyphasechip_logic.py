@@ -99,13 +99,15 @@ def droplet_detection(imgage, well_data, diameter, llps_status, multiple_droplet
 
     # prepare image and find well
     grad = fun.first_derivative(imgage)
-    xw, yw, rw, well_data, well_found = fun.find_circle_algo(grad, well_data, diameter, dev=10)
+    dp = 1.6
+    xw, yw, rw, well_data, well_found = fun.find_circle_algo(grad, well_data, diameter, dp, dev=10)
 
     img = fun.image_manipulation(imgage.copy(), xw, yw, rw)
     masked_img_grad = fun.mask_img_circle(grad, xw, yw, rw, t)
-    _, masked_img_grad_thresh = cv2.threshold(masked_img_grad, 100, 255, cv2.THRESH_BINARY)
-    masked_img_grad_thresh_dil = cv2.dilate(masked_img_grad_thresh, (30, 30), iterations=5)
-    masked_img_grad_thresh_blur = cv2.blur(masked_img_grad_thresh_dil, (5, 5))
+    _, masked_img_grad_thresh = cv2.threshold(masked_img_grad, 45, 255, cv2.THRESH_BINARY)
+    masked_img_grad_thresh_dil = cv2.dilate(masked_img_grad_thresh, (3, 3), iterations=1)
+    masked_img_grad_thresh_ero = cv2.erode(masked_img_grad_thresh_dil, (3, 3), iterations=2)
+    masked_img_grad_thresh_blur = cv2.blur(masked_img_grad_thresh_ero, (3, 3))
 
     # check for multiple droplets in well
     if t < 6:
@@ -117,11 +119,10 @@ def droplet_detection(imgage, well_data, diameter, llps_status, multiple_droplet
     else:
         multiple_droplets = False
 
-    print(f"status: {c},{w},{t}: Multiple droplets found (counter): {multiple_droplets_count} ")
-    print(f"well_found: {well_found}, llps_status: {llps_status}")
     if well_found is True and llps_status is False and multiple_droplets is False:
         # detect droplet
-        _, _, _, droplet_data, droplet_found = fun.find_droplet_algo(masked_img_grad_thresh_blur, droplet_data, diameter, t, dev=10)
+        dp = 1.6
+        _, _, _, droplet_data, droplet_found = fun.find_droplet_algo(masked_img_grad_thresh_blur, droplet_data, diameter, t, dp, dev=10)
 
         # if droplet couldn't be found, it is assumed that it is as big as the well
         if droplet_found is False and t < 5:
@@ -133,14 +134,13 @@ def droplet_detection(imgage, well_data, diameter, llps_status, multiple_droplet
 
     else:
         droplet_found = False
-    print(f"status: droplet_found: {droplet_found}")
     logger.debug(f"status: droplet found: {droplet_found}")
     return xw, yw, rw, droplet_data, droplet_found, multiple_droplets_count, masked_img_grad, masked_img_grad_thresh_blur, well_data
 
 
 # Detect LLPS
 # loop over ALL the images
-def detect_LLPS(percental_threshold, droplet_arr, llps_status, img, t, areas, #manip_img
+def detect_LLPS(percental_threshold, droplet_arr, llps_status, img, t, areas, areas_list, #manip_img
                 mean_list, droplet_found, n_0):
     logger.debug("LLPS detection")
     time.sleep(0.5)
@@ -188,8 +188,8 @@ def detect_LLPS(percental_threshold, droplet_arr, llps_status, img, t, areas, #m
 
         if t > 1:
             # Detector
-            llps_status, areas, mean_list = fun.LLPS_detector(n, percental_threshold, areas, droplet_arr,
-                                                               mean_list, r_extrapolated)
+            llps_status, areas, areas_list, mean_list = fun.LLPS_detector(n, percental_threshold, areas, areas_list, t,
+                                                                          droplet_arr, mean_list, r_extrapolated)
 
         # computation is done; transfer current droplet data to previous one
         droplet_arr[1, 0] = droplet_arr[0, 0]
@@ -202,7 +202,7 @@ def detect_LLPS(percental_threshold, droplet_arr, llps_status, img, t, areas, #m
         squircled_pixels = 0
         cropped_squircled_pixels = 0
 
-    return llps_status, areas, mean_list, droplet_arr, squircled_pixels, cropped_squircled_pixels,  n_0
+    return llps_status, areas, areas_list, mean_list, droplet_arr, squircled_pixels, cropped_squircled_pixels,  n_0
 
 
 # calculate starting concentrations
@@ -242,101 +242,7 @@ def ccrit_calculation(c_start, areas, conc_nr):
     return llps_conc
 
 
-def quality_control(bigdict, time_idx, conc_nr, well_nr, name_sol1, name_sol2, unit_sol1, unit_sol2,
-                    starting_concentrations, circles):
-    # Status
-    print("Well found: ", bigdict[0][conc_nr][well_nr]['well status'])
-    print("Droplet found: ", bigdict[0][conc_nr][well_nr]['droplet status'])
-    print("LLPS found: ", bigdict[0][conc_nr][well_nr]['LLPS status'])
-    print("file name: ", bigdict[0][conc_nr][well_nr]['LLPS name'])
-    print(" ")
-    print('initial concentrations:')
-    print(name_sol1, '', name_sol2)
-    print(starting_concentrations)
-
-    # concentrations and areas
-    if bigdict[0][conc_nr][well_nr]['well status'] is True \
-            and bigdict[0][conc_nr][well_nr]['LLPS status'] is True:
-        print(' ')
-        print('LLPS concentrations:')
-        print(f"{name_sol1}", f"- conc.: {round((bigdict[0][conc_nr][well_nr]['LLPS conc'][0, 0]), 3)} {unit_sol1}")
-        print(f"{name_sol2}", f"- conc.: {round((bigdict[0][conc_nr][well_nr]['LLPS conc'][0, 1]), 3)} {unit_sol2}")
-        print(" ")
-        print("Areas:", int(bigdict[0][conc_nr][well_nr]['areas'][0, 0]), " ",
-              int(bigdict[0][conc_nr][well_nr]['areas'][0, 1]))
-
-    fig = plt.figure(figsize=(15, 30))
-    ax1 = fig.add_subplot(5,2,1)
-    ax1.set_title('gray img of requested t')
-    ax1.imshow(bigdict[time_idx][conc_nr][well_nr]['gray'].copy())
-
-    if circles is not None:
-        for i in circles[0, :]:
-            center = (i[0], i[1])
-            # circle outline
-            radius = (i[2])
-            circles_img = cv2.circle(bigdict[0][conc_nr][well_nr]['gray'].copy(), center, radius, (0, 0, 0), 1)
-
-            ax2 = fig.add_subplot(5, 2, 2)
-            ax2.set_title('detected well')
-            ax2.imshow(circles_img)
-
-            if bigdict[0][conc_nr][well_nr]['droplet status']:
-                ax3 = fig.add_subplot(5, 2, 3)
-                for i in bigdict[0][conc_nr][well_nr]['droplet geometry'][0, :]:
-                    center = (i[0], i[1])
-                    # circle outline
-                    radius = (i[2])
-                    droplet_img = cv2.circle(bigdict[0][conc_nr][well_nr]['gray'].copy(), center, radius, (0, 0, 0), 1)
-
-                    ax3.set_title('found droplet at t0')
-                    ax3.imshow(droplet_img)
-
-            ax4 = fig.add_subplot(5, 2, 4)
-            ax4.plot(np.arange(len(bigdict[0][conc_nr][well_nr]['mean list'])),
-                     bigdict[0][conc_nr][well_nr]['mean list'], marker='o', label="mean values")
-            ax4.set_xlabel('image nr')
-            ax4.set_ylabel('avg. mean of droplet')
-            ax4.set_ylim([min(bigdict[0][conc_nr][well_nr]['mean list'])-0.5,
-                          max(bigdict[0][conc_nr][well_nr]['mean list'])+0.5])
-            ax4.xaxis.set_major_locator(MaxNLocator(integer=True))
-            ax4.set_xlim([0, len(bigdict[0][conc_nr][well_nr]['mean list'])-1])
-        if bigdict[0][conc_nr][well_nr]['droplet status'] is True:
-
-            if time_idx > 0:
-                ax8 = fig.add_subplot(5, 2, 8)
-                ax8.set_title('subtraction result')
-                ax8.imshow(bigdict[time_idx][conc_nr][well_nr]['thresh'], cmap='gray')
-                ax9 = fig.add_subplot(5, 2, 9)
-                ax9.set_title('squircle result')
-                ax9.imshow(bigdict[time_idx][conc_nr][well_nr]['pixel values'])
-
-    print("List of Means")
-    print(bigdict[0][conc_nr][well_nr]['mean list'])
-
-    if bigdict[0][conc_nr][well_nr]['well status'] is True \
-            and bigdict[0][conc_nr][well_nr]['LLPS status'] is True:
-
-        fig2, ((ax11, ax12), (ax13, ax14)) = plt.subplots(2, 2, figsize=(15, 15))
-        # before LLPS detections
-        A_10 = bigdict[((bigdict[0][conc_nr][well_nr]['ID']) - 3)][conc_nr][well_nr]['masked image'].copy()
-        A_11 = bigdict[((bigdict[0][conc_nr][well_nr]['ID']) - 2)][conc_nr][well_nr]['masked image'].copy()
-        A_12 = bigdict[((bigdict[0][conc_nr][well_nr]['ID']) - 1)][conc_nr][well_nr]['masked image'].copy()
-        # at LLPS detection
-        grimes = bigdict[(bigdict[0][conc_nr][well_nr]['ID'])][conc_nr][well_nr]['gray'].copy()
-
-        ax11.imshow(A_10, cmap='gray')
-        ax11.set_title('three t before LLPS detection')
-        ax12.imshow(A_11, cmap='gray')
-        ax12.set_title('two t before LLPS detection')
-        ax13.imshow(A_12, cmap='gray')
-        ax13.set_title('one t before LLPS detection')
-        ax14.imshow(grimes, cmap='gray')
-        ax14.set_title('at LLPS detection')
-
-
-def save_results_to_csv(bigdict, image_folder, n_concentrations, n_wells, h, iph, name_sol1, name_sol2, unit_sol1, unit_sol2):
-    well_nr = 0
+def save_results_to_csv(bigdict, image_folder, n_concentrations, n_wells, name_sol1, name_sol2, unit_sol1, unit_sol2):
     pathtocsv = os.path.join(image_folder, "csv")
 
     try:
@@ -347,26 +253,25 @@ def save_results_to_csv(bigdict, image_folder, n_concentrations, n_wells, h, iph
     csvname = f"results_{name_sol1}_{name_sol2}.csv"
 
     with open(os.path.join(pathtocsv, csvname), 'w', newline='') as csvFile:
-        writer = csv.writer(csvFile, delimiter=';', dialect='excel', quotechar='"', quoting=csv.QUOTE_ALL)
+        writer = csv.writer(csvFile, delimiter=',', dialect='excel', quotechar='"', quoting=csv.QUOTE_ALL)
         writer.writerow(["Image names", f"LLPS conc. {name_sol1} [{unit_sol1}]",
-                         f"LLPS conc. {name_sol2} [{unit_sol2}]"])
+                         f"LLPS conc. {name_sol2} [{unit_sol2}]", "Area start", "Area LLPS"])
         writer.writerow(" ")
 
+        dictionary = {}
         for conc_nr in range(n_concentrations):
-            for n_rows_per_conc in range(2):
-                for n_wells_per_row in range(n_wells):
-                    if bigdict[0][conc_nr][well_nr]['well status'] is True and \
-                            bigdict[0][conc_nr][well_nr]['LLPS status'] is True:
-                        writer.writerow(
-                            [bigdict[0][conc_nr][well_nr]['LLPS name'], bigdict[0][conc_nr][well_nr]['LLPS conc'][0, 0],
-                             bigdict[0][conc_nr][well_nr]['LLPS conc'][0, 1]])
+            for well_nr in range(n_wells):
+                if bigdict[0][conc_nr][well_nr]['areas'][0, 1] != 0:
+                    writer.writerow(
+                        [bigdict[0][conc_nr][well_nr]['LLPS name'], bigdict[0][conc_nr][well_nr]['LLPS conc'][0, 0],
+                         bigdict[0][conc_nr][well_nr]['LLPS conc'][0, 1],
+                         bigdict[0][conc_nr][well_nr]['areas'][0, 0], bigdict[0][conc_nr][well_nr]['areas'][0, 1]])
 
-                    well_nr += 1
-            well_nr = 0
 
         writer.writerow(" ")
         writer.writerow(" ")
-        writer.writerow(["If you use natively a ',' as a decimal separator, you probably need/"
+        writer.writerow(["If you use natively a ';' as a decimal separator, you probably need/"
                          "to change it for correct display of numbers"])
         writer.writerow(["In excel you can do this via File -> Options -> Advanced, here you can change separators"])
+        writer.writerow(["Or you change the delimiter in the save_results_to_csv function in the _logic.py file"])
 

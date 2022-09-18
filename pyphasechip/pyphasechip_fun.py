@@ -90,11 +90,11 @@ def first_derivative(gray_image):
 
 
 # find the well with the help of hough
-def find_circle(img: np.ndarray, diameter: int, n: float, m: float):
-    dp = 1.6
+def find_circle(img: np.ndarray, diameter: int, n: float, m: float, dp: float):
+    # dp = 1.6
     minDist = 450
     param1 = 50
-    param2 = 40
+    param2 = 50
     min_r_chamber = int((diameter / 2) * n)
     max_r_chamber = int((diameter / 2) * m)
 
@@ -117,13 +117,13 @@ def find_circle(img: np.ndarray, diameter: int, n: float, m: float):
 
 
 # little algorithm to find the well reliably
-def find_circle_algo(img: np.ndarray, well_data: np.ndarray, diameter: int, dev: int):
+def find_circle_algo(img: np.ndarray, well_data: np.ndarray, diameter: int, dp: float, dev: int):
     n = 0.95
     m = 1.05
     a = 0
 
     # initial detection
-    x, y, r = find_circle(img, diameter, n, m)
+    x, y, r = find_circle(img, diameter, n, m, dp)
 
     # tries to makes shure that a well is detected
     while x == 0 and a < 5:
@@ -131,7 +131,7 @@ def find_circle_algo(img: np.ndarray, well_data: np.ndarray, diameter: int, dev:
         m += 0.08
         a += 1
         logger.warning(f"Could not find well! Retry counter: {a}")
-        x, y, r = find_circle(img, diameter, n, m)
+        x, y, r = find_circle(img, diameter, n, m, dp)
 
     well_data[0, 0] = x
     well_data[0, 1] = y
@@ -148,25 +148,21 @@ def find_circle_algo(img: np.ndarray, well_data: np.ndarray, diameter: int, dev:
 
 
 # little algorithm to find the droplet reliably
-def find_droplet_algo(img: np.ndarray, droplet_data: np.ndarray, diameter: int, t, dev: int):
+def find_droplet_algo(img: np.ndarray, droplet_data: np.ndarray, diameter: int, t, dp: float, dev: int):
     n = 0
     m = 1.05 - t * 0.008
     a = 0
-    print("detect a droplet")
     # initial detection
-    x, y, r = find_circle(img, diameter, n, m)
-    print(f"results: {x},{y},{r}")
+    x, y, r = find_circle(img, diameter, n, m, dp)
     logger.debug(f"droplet data: x: {x}, y: {y}, r: {r}")
 
     # tries to makes shure that a well is detected
     while x == 0 and a < 5:
-        print("try again to detect a droplet")
         logger.debug("retry finding droplet...")
         m += 0.05
         a += 1
-        x, y, r = find_circle(img, diameter, n, m)
+        x, y, r = find_circle(img, diameter, n, m, dp)
         logger.debug(f"results after {a}-retries: {x},{y},{r}")
-        print(f"results after {a}-retries: {x},{y},{r}")
     droplet_data[0, 0] = x
     droplet_data[0, 1] = y
     droplet_data[0, 2] = r
@@ -195,10 +191,9 @@ def find_multiple_droplets(threshold_img, xw, yw, rw):
     for x, y in np.ndindex(crop.shape):
         if crop[x, y] == 0:
             n += 1
-    print(f"multiple_droplets: n = {n}")
     if n > threshold:
         multidroplet = True
-        print("find_multiple_droplets was triggered!")
+        # print("find_multiple_droplets was triggered!")
         logger.warning("find_multiple_droplets was triggered!")
         logger.warning(f"count: n = {n}")
     else:
@@ -270,7 +265,7 @@ def squircle_iteration(img, x0, y0, radius):
 
 
 # LLPS detector
-def LLPS_detector(n_black_pxls, percental_threshold, areas, droplet_arr, mean_list, r_extrapolated):
+def LLPS_detector(n_black_pxls, percental_threshold, areas, areas_list, t, droplet_arr, mean_list, r_extrapolated):
     mean_abs = n_black_pxls/r_extrapolated # not abs anymore, now norm
     logger.debug(f"mean norm:  {mean_abs}")
 
@@ -291,9 +286,23 @@ def LLPS_detector(n_black_pxls, percental_threshold, areas, droplet_arr, mean_li
         # perc_diff_normalised, percental_threshold
         if 2400 < percental_difference and abs_difference > abs_threshhold:
             llps_status = True
-            # save area to array
-            areas[0, 1] = droplet_arr[0, 3]
-            # save last mean
+            # calculate area based on droplet shrinking history and save to array
+            # assumptions: droplets shrink linearly (not totally true in practice, but holds locally)
+            p = len(areas_list)
+            if len(areas_list) > 8:
+                q = len(areas_list) - 8
+                a = areas_list[q][0]
+                x = t - areas_list[q][1]
+            else:
+                q = 1
+                a = areas_list[1][0]
+                x = t
+            m = (areas_list[p-3][0] - areas_list[q][0]) / (areas_list[p-3][1] - areas_list[q][1])
+            # logger.debug(f"areas list:, {areas_list}")
+            # logger.debug(f"p:, {p}, q:, {q}, m:, {m}, a:, {a}, x:, {x}")
+            # logger.debug(f"values:  {areas_list[p-3][0]}, {areas_list[q][0]}, {areas_list[p-3][1]}, {areas_list[q][1]} ")
+
+            areas[0, 1] = m * x + a
 
         else:
             llps_status = False
@@ -302,6 +311,7 @@ def LLPS_detector(n_black_pxls, percental_threshold, areas, droplet_arr, mean_li
         llps_status = False
 
     mean_list.append(mean_abs)
+    areas_list.append((droplet_arr[0, 3], t))
     logger.debug(f"LLPS Detector | mean list: {mean_list}")
 
-    return llps_status, areas, mean_list
+    return llps_status, areas, areas_list, mean_list
