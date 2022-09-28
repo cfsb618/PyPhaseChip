@@ -104,7 +104,8 @@ def droplet_detection(imgage, well_data, diameter, llps_status, multiple_droplet
 
     img = fun.image_manipulation(imgage.copy(), xw, yw, rw)
     masked_img_grad = fun.mask_img_circle(grad, xw, yw, rw, t)
-    _, masked_img_grad_thresh = cv2.threshold(masked_img_grad, 45, 255, cv2.THRESH_BINARY)
+    _, masked_img_grad_thresh = cv2.threshold(masked_img_grad, 100, 255, cv2.THRESH_BINARY)
+    # 45 works as well for threshold value
     masked_img_grad_thresh_dil = cv2.dilate(masked_img_grad_thresh, (3, 3), iterations=1)
     masked_img_grad_thresh_ero = cv2.erode(masked_img_grad_thresh_dil, (3, 3), iterations=2)
     masked_img_grad_thresh_blur = cv2.blur(masked_img_grad_thresh_ero, (3, 3))
@@ -141,7 +142,7 @@ def droplet_detection(imgage, well_data, diameter, llps_status, multiple_droplet
 # Detect LLPS
 # loop over ALL the images
 def detect_LLPS(percental_threshold, droplet_arr, llps_status, img, t, areas, areas_list, #manip_img
-                mean_list, droplet_found, n_0):
+                mean_list, droplet_found, n_0, thresh_llps):
     logger.debug("LLPS detection")
     time.sleep(0.5)
     # radius_droplet = droplet_arr[0, 2]
@@ -178,10 +179,9 @@ def detect_LLPS(percental_threshold, droplet_arr, llps_status, img, t, areas, ar
         d = int(0.54 * r_extrapolated)  # dumb calculation, make it related to mind_d
         cropped_squircled_pixels = cv2.dilate(squircled_pixels[y - d:y + d, x - d:x + d], (1, 1))  # crop and dilate
 
-        _, thresh = cv2.threshold(cropped_squircled_pixels, 130, 255, cv2.THRESH_BINARY_INV)
-        #thresh = 0
-        #n = (np.sum(thresh) + (cropped_squircled_pixels.shape[0]**2 - np.count_nonzero(cropped_squircled_pixels)))
-        n = np.sum(thresh) #/ d**2
+        _, thresh = cv2.threshold(cropped_squircled_pixels, thresh_llps, 255, cv2.THRESH_BINARY_INV)
+
+        n = np.sum(thresh)
 
         if t == 0:
             n_0 = n
@@ -202,7 +202,7 @@ def detect_LLPS(percental_threshold, droplet_arr, llps_status, img, t, areas, ar
         squircled_pixels = 0
         cropped_squircled_pixels = 0
 
-    return llps_status, areas, areas_list, mean_list, droplet_arr, squircled_pixels, cropped_squircled_pixels,  n_0
+    return llps_status, areas, areas_list, mean_list, droplet_arr, squircled_pixels, cropped_squircled_pixels,  n_0, thresh
 
 
 # calculate starting concentrations
@@ -258,7 +258,6 @@ def save_results_to_csv(bigdict, image_folder, n_concentrations, n_wells, name_s
                          f"LLPS conc. {name_sol2} [{unit_sol2}]", "Area start", "Area LLPS"])
         writer.writerow(" ")
 
-        dictionary = {}
         for conc_nr in range(n_concentrations):
             for well_nr in range(n_wells):
                 if bigdict[0][conc_nr][well_nr]['areas'][0, 1] != 0:

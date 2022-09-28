@@ -94,7 +94,7 @@ def find_circle(img: np.ndarray, diameter: int, n: float, m: float, dp: float):
     # dp = 1.6
     minDist = 450
     param1 = 50
-    param2 = 50
+    param2 = 40
     min_r_chamber = int((diameter / 2) * n)
     max_r_chamber = int((diameter / 2) * m)
 
@@ -282,9 +282,9 @@ def LLPS_detector(n_black_pxls, percental_threshold, areas, areas_list, t, dropl
         # Calculate absolute difference between current mean value and average mean of all previous images
         abs_difference = abs(np.subtract(mean_abs, avg_mean_all_previous_images))
         logger.debug(f"absolute difference: {abs_difference}")
-        abs_threshhold = 3  # Make this a value determined in the interface
+        abs_threshhold = 7  # Make this a value determined in the interface
         # perc_diff_normalised, percental_threshold
-        if 2400 < percental_difference and abs_difference > abs_threshhold:
+        if percental_threshold < percental_difference and abs_difference > abs_threshhold:
             llps_status = True
             # calculate area based on droplet shrinking history and save to array
             # assumptions: droplets shrink linearly (not totally true in practice, but holds locally)
