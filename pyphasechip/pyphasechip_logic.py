@@ -100,13 +100,13 @@ def droplet_detection(imgage, well_data, diameter, llps_status, multiple_droplet
     # prepare image and find well
     grad = fun.first_derivative(imgage)
     dp = 1.6
-    xw, yw, rw, well_data, well_found = fun.find_circle_algo(grad, well_data, diameter, dp, dev=10)
+    xw, yw, rw, well_data, well_found = fun.find_circle_algo(grad.copy(), well_data, diameter, dp, dev=10)
 
     img = fun.image_manipulation(imgage.copy(), xw, yw, rw)
-    masked_img_grad = fun.mask_img_circle(grad, xw, yw, rw, t)
+    masked_img_grad = fun.mask_img_circle(grad.copy(), xw, yw, rw, t)
     _, masked_img_grad_thresh = cv2.threshold(masked_img_grad, 100, 255, cv2.THRESH_BINARY)
     # 45 works as well for threshold value
-    masked_img_grad_thresh_dil = cv2.dilate(masked_img_grad_thresh, (3, 3), iterations=1)
+    masked_img_grad_thresh_dil = cv2.dilate(masked_img_grad_thresh, (3, 3), iterations=4)
     masked_img_grad_thresh_ero = cv2.erode(masked_img_grad_thresh_dil, (3, 3), iterations=2)
     masked_img_grad_thresh_blur = cv2.blur(masked_img_grad_thresh_ero, (3, 3))
 
@@ -136,7 +136,7 @@ def droplet_detection(imgage, well_data, diameter, llps_status, multiple_droplet
     else:
         droplet_found = False
     logger.debug(f"status: droplet found: {droplet_found}")
-    return xw, yw, rw, droplet_data, droplet_found, multiple_droplets_count, masked_img_grad, masked_img_grad_thresh_blur, well_data
+    return xw, yw, rw, droplet_data, droplet_found, multiple_droplets_count, masked_img_grad, masked_img_grad_thresh_blur, well_data, grad
 
 
 # Detect LLPS
@@ -201,6 +201,7 @@ def detect_LLPS(percental_threshold, droplet_arr, llps_status, img, t, areas, ar
     else:
         squircled_pixels = 0
         cropped_squircled_pixels = 0
+        thresh = 0
 
     return llps_status, areas, areas_list, mean_list, droplet_arr, squircled_pixels, cropped_squircled_pixels,  n_0, thresh
 
@@ -242,7 +243,7 @@ def ccrit_calculation(c_start, areas, conc_nr):
     return llps_conc
 
 
-def save_results_to_csv(bigdict, image_folder, n_concentrations, n_wells, name_sol1, name_sol2, unit_sol1, unit_sol2):
+def save_results_to_csv(bigdict, image_folder, n_concentrations, n_wells, name_sol1, name_sol2, unit_sol1, unit_sol2, thresh_llps):
     pathtocsv = os.path.join(image_folder, "csv")
 
     try:
@@ -268,6 +269,7 @@ def save_results_to_csv(bigdict, image_folder, n_concentrations, n_wells, name_s
 
 
         writer.writerow(" ")
+        writer.writerow(f"thresh_llps: {thresh_llps}")
         writer.writerow(" ")
         writer.writerow(["If you use natively a ';' as a decimal separator, you probably need/"
                          "to change it for correct display of numbers"])
